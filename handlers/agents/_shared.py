@@ -7,9 +7,9 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 AGENT_OPTIONS: dict[str, dict[str, str]] = {
+    "copilot": {"label": "GitHub Copilot CLI"},  # First = fallback default
     "claude-code": {"label": "Claude Code"},
     "gemini": {"label": "Gemini CLI"},
-    "copilot": {"label": "GitHub Copilot CLI"},
     "codex": {"label": "ChatGPT Codex"},
     "ollama:": {"label": "Ollama — Default Model"},
     "lmstudio:": {"label": "LM Studio — Default Model"},
