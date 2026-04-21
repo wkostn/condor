@@ -15,7 +15,7 @@ AGENT_OPTIONS: dict[str, dict[str, str]] = {
     "lmstudio:": {"label": "LM Studio — Default Model"},
 }
 
-DEFAULT_AGENT = "claude-code"
+DEFAULT_AGENT = "copilot"  # Changed from "claude-code" to use GitHub Copilot (no OAuth expiry issues)
 
 # -- Agent modes --
 
