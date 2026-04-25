@@ -441,6 +441,11 @@ async def post_init(application: Application) -> None:
 
     await restore_scheduled_jobs(application)
 
+    # Inject Telegram bot into routine store so web-triggered routines can send messages
+    from condor.routine_store import get_routine_store
+
+    get_routine_store().set_bot(application.bot)
+
     # Start ServerDataService (unified server-centric cache)
     from condor.server_data_service import get_server_data_service
     from condor.server_data_service import register_default_fetches as sds_register
@@ -468,6 +473,7 @@ async def post_init(application: Application) -> None:
 
     # Start file watcher
     asyncio.create_task(watch_and_reload(application))
+
 
 
 async def watch_and_reload(application: Application) -> None:
@@ -626,6 +632,17 @@ async def _run_dual(application: Application) -> None:
 
     # Start WebSocket manager
     get_ws_manager().start()
+
+    # Notify admin that Condor has started
+    from utils.config import ADMIN_USER_ID
+    if ADMIN_USER_ID:
+        try:
+            await application.bot.send_message(
+                chat_id=int(ADMIN_USER_ID),
+                text="Condor is online and ready.",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send startup notification to admin: {e}")
 
     logger.info("Starting Condor: Telegram bot + web dashboard on port %s", WEB_PORT)
 

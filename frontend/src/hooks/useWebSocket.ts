@@ -56,6 +56,13 @@ export function useCondorWebSocket(
             },
           );
         }
+      } else if (prefix === "orderbook") {
+        // channel format: orderbook:{server}:{connector}:{pair}
+        const parts = channel.split(":");
+        if (parts.length >= 4) {
+          const [, srv, connector, pair] = parts;
+          queryClient.setQueryData(["order-book", srv, connector, pair], data);
+        }
       } else if (prefix === "candles") {
         // channel format: candles:{server}:{connector}:{pair}:{interval}
         const parts = channel.split(":");
@@ -92,7 +99,9 @@ export function useCondorWebSocket(
                   return updated;
                 } else if (ts > old[lastIdx].timestamp) {
                   // New candle after the last one
-                  return [...old, payload.candle!];
+                  const appended = [...old, payload.candle!];
+                  // Cap at 1000 candles to prevent unbounded growth
+                  return appended.length > 1000 ? appended.slice(-1000) : appended;
                 }
                 // Candle for an older timestamp — ignore
                 return old;
@@ -132,10 +141,11 @@ export function useCondorWebSocket(
                   }
                 }
                 if (!changed) return old;
-                // Sort by timestamp and return
-                return Array.from(map.values()).sort(
+                // Sort by timestamp, cap at 1000 to prevent unbounded growth
+                const sorted = Array.from(map.values()).sort(
                   (a, b) => a.timestamp - b.timestamp,
                 );
+                return sorted.length > 1000 ? sorted.slice(-1000) : sorted;
               },
             );
           }
