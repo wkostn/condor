@@ -241,7 +241,7 @@ class ACPClient:
         self._process.stdin.write((json.dumps(msg) + "\n").encode())
         await self._process.stdin.drain()
 
-        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._peer._pending[req_id] = future
 
         def _on_response(fut: asyncio.Future) -> None:
@@ -260,9 +260,74 @@ class ACPClient:
 
         future.add_done_callback(_on_response)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start_time = loop.time()
         max_duration = 1860  # 31 min hard ceiling (slightly above session-level timeout)
+
+        while True:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=30)
+            except asyncio.TimeoutError:
+                elapsed = loop.time() - start_time
+                if not self.alive:
+                    yield PromptDone(stop_reason="disconnected")
+                    break
+                if elapsed > max_duration:
+                    log.warning("Prompt hard timeout after %.0fs", elapsed)
+                    yield PromptDone(stop_reason="timeout")
+                    break
+                yield Heartbeat(elapsed_seconds=elapsed)
+                continue
+            if event is None:
+                break
+            yield event
+            if isinstance(event, PromptDone):
+                break
+
+    async def prompt_stream_multimodal(self, content: list[dict]) -> AsyncIterator[ACPEvent]:
+        """Send a multimodal prompt (text, images, files) and yield ACP events."""
+        assert self._process and self._session_id
+
+        # Clear the event queue
+        while not self._event_queue.empty():
+            self._event_queue.get_nowait()
+
+        req_id = self._peer._next_id
+        self._peer._next_id += 1
+        msg = {
+            "jsonrpc": "2.0",
+            "method": "session/prompt",
+            "params": {
+                "sessionId": self._session_id,
+                "prompt": content,  # List of {type, text/data/...} objects
+            },
+            "id": req_id,
+        }
+        self._process.stdin.write((json.dumps(msg) + "\n").encode())
+        await self._process.stdin.drain()
+
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._peer._pending[req_id] = future
+
+        def _on_response(fut: asyncio.Future) -> None:
+            if fut.cancelled():
+                self._event_queue.put_nowait(PromptDone(stop_reason="cancelled"))
+            elif fut.exception():
+                self._event_queue.put_nowait(PromptDone(stop_reason="error"))
+            else:
+                result = fut.result()
+                reason = (
+                    result.get("stopReason", "end_turn")
+                    if isinstance(result, dict)
+                    else "end_turn"
+                )
+                self._event_queue.put_nowait(PromptDone(stop_reason=reason))
+
+        future.add_done_callback(_on_response)
+
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
+        max_duration = 1860
 
         while True:
             try:

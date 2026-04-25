@@ -709,3 +709,214 @@ async def agent_message_handler(
             chat_id=chat_id,
             text="Agent timed out (took too long). Send a message to start a new session.",
         )
+
+
+@restricted
+async def agent_photo_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle photo messages sent to agent."""
+    chat_type = update.effective_chat.type
+    if chat_type in ("group", "supergroup"):
+        return
+
+    from config_manager import UserRole, get_config_manager
+
+    user_id = update.effective_user.id
+    cm = get_config_manager()
+    role = cm.get_user_role(user_id)
+    if role not in (UserRole.ADMIN, UserRole.USER):
+        return
+
+    chat_id = update.effective_chat.id
+    session = get_session(chat_id)
+
+    # Auto-create session if needed
+    if not session or not session.client.alive:
+        agent_key = context.user_data.get("agent_llm", DEFAULT_AGENT)
+        if not _is_agent_available(agent_key):
+            return
+
+        try:
+            bot = context.bot
+
+            async def _perm_cb(tool_call, options):
+                from .confirmation import permission_callback
+                return await permission_callback(bot, chat_id, tool_call, options)
+
+            session = await get_or_create_session(
+                chat_id=chat_id,
+                agent_key=agent_key,
+                permission_callback=_perm_cb,
+                user_id=user_id,
+                user_data=context.user_data,
+                mode=context.user_data.get("agent_mode", DEFAULT_MODE),
+            )
+        except Exception as e:
+            log.exception("Failed to create agent session")
+            await update.message.reply_text(f"Failed to start agent: {e}")
+            return
+
+    # Download photo
+    import base64
+
+    photo = update.message.photo[-1]  # Largest size
+    caption = update.message.caption or ""
+    
+    placeholder = await update.message.reply_text("Processing image...")
+
+    try:
+        file = await context.bot.get_file(photo.file_id)
+        photo_bytes = await file.download_as_bytearray()
+        
+        # Convert to base64
+        photo_b64 = base64.b64encode(bytes(photo_bytes)).decode('utf-8')
+        
+        # Build multimodal content
+        content = [
+            {"type": "image", "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": photo_b64
+            }}
+        ]
+        if caption:
+            content.insert(0, {"type": "text", "text": caption})
+        
+        # Stream response
+        mode = context.user_data.get("agent_mode", DEFAULT_MODE)
+        mode_label = AGENT_MODES.get(mode, {}).get("label", "")
+        prefix = f"{mode_label}\n\n" if mode != DEFAULT_MODE and mode_label else ""
+        
+        streamer = TelegramStreamer(
+            bot=context.bot,
+            chat_id=chat_id,
+            message_id=placeholder.message_id,
+            prefix=prefix,
+        )
+        edit_task = streamer.start_edit_loop()
+
+        last_event = None
+        async for event in session.client.prompt_stream_multimodal(content):
+            await streamer.process_event(event)
+            last_event = event
+
+        await streamer.finalize()
+
+        # Handle disconnect/timeout
+        if isinstance(last_event, PromptDone) and last_event.stop_reason == "disconnected":
+            await destroy_session(chat_id)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Agent session disconnected.",
+            )
+
+    except Exception as e:
+        log.exception("Photo processing error")
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=placeholder.message_id,
+            text=f"Error processing photo: {e}",
+        )
+
+
+@restricted
+async def agent_document_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle document/file messages sent to agent."""
+    chat_type = update.effective_chat.type
+    if chat_type in ("group", "supergroup"):
+        return
+
+    from config_manager import UserRole, get_config_manager
+
+    user_id = update.effective_user.id
+    cm = get_config_manager()
+    role = cm.get_user_role(user_id)
+    if role not in (UserRole.ADMIN, UserRole.USER):
+        return
+
+    chat_id = update.effective_chat.id
+    session = get_session(chat_id)
+
+    # Auto-create session if needed
+    if not session or not session.client.alive:
+        agent_key = context.user_data.get("agent_llm", DEFAULT_AGENT)
+        if not _is_agent_available(agent_key):
+            return
+
+        try:
+            bot = context.bot
+
+            async def _perm_cb(tool_call, options):
+                from .confirmation import permission_callback
+                return await permission_callback(bot, chat_id, tool_call, options)
+
+            session = await get_or_create_session(
+                chat_id=chat_id,
+                agent_key=agent_key,
+                permission_callback=_perm_cb,
+                user_id=user_id,
+                user_data=context.user_data,
+                mode=context.user_data.get("agent_mode", DEFAULT_MODE),
+            )
+        except Exception as e:
+            log.exception("Failed to create agent session")
+            await update.message.reply_text(f"Failed to start agent: {e}")
+            return
+
+    document = update.message.document
+    caption = update.message.caption or f"Here's the file: {document.file_name}"
+    
+    placeholder = await update.message.reply_text("Processing file...")
+
+    try:
+        file = await context.bot.get_file(document.file_id)
+        file_bytes = await file.download_as_bytearray()
+        
+        # Send as text prompt with file info
+        file_text = f"{caption}\n\nFile: {document.file_name} ({len(file_bytes)} bytes)"
+        
+        # Try to decode if it's a text file
+        try:
+            content_text = bytes(file_bytes).decode('utf-8')
+            file_text += f"\n\nContent:\n```\n{content_text[:8000]}\n```"  # Limit size
+        except:
+            file_text += "\n\n(Binary file - content not shown)"
+        
+        # Stream response
+        mode = context.user_data.get("agent_mode", DEFAULT_MODE)
+        mode_label = AGENT_MODES.get(mode, {}).get("label", "")
+        prefix = f"{mode_label}\n\n" if mode != DEFAULT_MODE and mode_label else ""
+        
+        streamer = TelegramStreamer(
+            bot=context.bot,
+            chat_id=chat_id,
+            message_id=placeholder.message_id,
+            prefix=prefix,
+        )
+        edit_task = streamer.start_edit_loop()
+
+        last_event = None
+        async for event in session.prompt_stream(file_text):
+            await streamer.process_event(event)
+            last_event = event
+
+        await streamer.finalize()
+
+        # Handle disconnect/timeout
+        if isinstance(last_event, PromptDone) and last_event.stop_reason == "disconnected":
+            await destroy_session(chat_id)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Agent session disconnected.",
+            )
+
+    except Exception as e:
+        log.exception("Document processing error")
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=placeholder.message_id,
+            text=f"Error processing file: {e}",
+        )

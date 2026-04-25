@@ -30,6 +30,13 @@ RUN uv sync --frozen --no-dev --no-editable
 
 RUN uv run python -c "import kaleido; kaleido.get_chrome_sync()" || true
 
+# Copy all files except frontend first
 COPY . .
+
+# Build frontend
+WORKDIR /app/frontend
+RUN npm install && npm run build
+
+WORKDIR /app
 VOLUME ["/app/data"]
 CMD ["uv", "run", "python", "main.py"]

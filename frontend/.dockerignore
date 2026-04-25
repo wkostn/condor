@@ -1,0 +1,2 @@
+# Override .gitignore - include dist for Docker builds
+node_modules
