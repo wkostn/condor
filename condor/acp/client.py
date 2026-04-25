@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 ACP_COMMANDS: dict[str, str] = {
     "claude-code": "claude-agent-acp",
     "gemini": "gemini --experimental-acp",
-    "copilot": "copilot --acp",
+    "copilot": "copilot --acp --model gpt-5-mini --additional-mcp-config @.mcp.json",  # FREE model (0x cost)
     "codex": "npx @zed-industries/codex-acp"
 }
 
@@ -127,6 +127,7 @@ class ACPClient:
             },
             self._process.stdin,
         )
+        log.info("ACP session/new params: cwd=%s, mcp_servers=%s", self.working_dir, self.mcp_servers)
         result = await self._peer.send_request(
             "session/new",
             {"cwd": self.working_dir, "mcpServers": self.mcp_servers},
@@ -202,7 +203,11 @@ class ACPClient:
                     break
                 text = line.decode(errors="replace").rstrip()
                 if text:
-                    log.debug("ACP stderr: %s", text)
+                    # Log MCP server errors at WARNING level for visibility
+                    if "error" in text.lower() or "exception" in text.lower() or "failed" in text.lower():
+                        log.warning("ACP stderr: %s", text)
+                    else:
+                        log.info("ACP stderr: %s", text)
         except asyncio.CancelledError:
             return
         except Exception:
