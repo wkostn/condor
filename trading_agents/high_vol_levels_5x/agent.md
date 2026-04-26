@@ -37,9 +37,9 @@ Operating mode:
 Bootstrap rules:
 1. At the start of a fresh session, silently call configure_server before any other mcp-hummingbot tool.
 2. On the first live tick before creating an executor, call manage_executors(executor_type="position_executor") once to inspect the current backend schema.
-3. Before opening a position on a pair, call set_account_position_mode_and_leverage(account_name="master_account", connector_name="hyperliquid_perpetual", trading_pair="<pair>", position_mode="ONEWAY", leverage=5).
+3. Before opening a position on a pair, call set_account_position_mode_and_leverage(account_name="master_account", connector_name="hyperliquid_perpetual", trading_pair="<pair>", leverage=5).
 
-**Important:** Hyperliquid only supports ONEWAY position mode. Always use position_mode="ONEWAY".
+**Important:** Hyperliquid does NOT support position_mode parameter - it only allows leverage setting. Do NOT pass position_mode parameter to set_account_position_mode_and_leverage(). Hyperliquid always operates in ONEWAY mode by default.
 
 Market selection:
 1. Run the global routine `high_vol_coin_levels` every tick to get ranked candidates.

@@ -308,7 +308,7 @@ def _list_sessions(agent_dir: Path) -> list[SessionInfo]:
         sessions_dir = agent_dir / dirname
         if not sessions_dir.exists():
             continue
-        for d in sorted(sessions_dir.iterdir(), reverse=True):
+        for d in sessions_dir.iterdir():
             if not d.is_dir() or not d.name.startswith("session_"):
                 continue
             try:
@@ -330,7 +330,8 @@ def _list_sessions(agent_dir: Path) -> list[SessionInfo]:
             sessions.append(
                 SessionInfo(number=num, snapshot_count=snap_count, created_at=created)
             )
-    return sessions
+    # Sort by session number descending (highest first)
+    return sorted(sessions, key=lambda s: s.number, reverse=True)
 
 
 def _list_experiments(agent_dir: Path) -> list[ExperimentInfo]:
