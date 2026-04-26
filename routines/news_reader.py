@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import xml.etree.ElementTree as ET
 
 import aiohttp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from telegram.ext import ContextTypes
 
 from routines.base import RoutineResult
@@ -65,6 +65,14 @@ class Config(BaseModel):
         default_factory=lambda: ["cointelegraph", "coindesk", "coinmarketcap"],
         description="Which sources to query (exclude 'x_twitter' if no API key)",
     )
+
+    @field_validator("assets", "sources", mode="before")
+    @classmethod
+    def normalize_lists(cls, v):
+        """Convert None to empty list or default for web UI compatibility."""
+        if v is None:
+            return []
+        return v
 
 
 async def _fetch_cointelegraph_news(assets: list[str], lookback_hours: int, max_articles: int) -> list[NewsDigest]:

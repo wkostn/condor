@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from telegram.ext import ContextTypes
 
 from routines.base import RoutineResult
@@ -49,6 +49,12 @@ class Config(BaseModel):
         default=24,
         description="Hours to lookback for liquidation data",
     )
+
+    @field_validator("trading_pairs", mode="before")
+    @classmethod
+    def normalize_trading_pairs(cls, v):
+        """Convert None to empty list for web UI compatibility."""
+        return v if v is not None else []
 
 
 async def _fetch_funding_rates(pairs: list[str]) -> dict[str, dict[str, Any]]:

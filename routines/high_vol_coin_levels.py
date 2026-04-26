@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from telegram.ext import ContextTypes
 
 from config_manager import get_client
@@ -37,6 +37,12 @@ class Config(BaseModel):
     breakout_window: int = Field(default=12, description="Recent candles used for breakout and breakdown levels")
     min_volume_usd: float = Field(default=25_000_000, description="Minimum 24h quote volume in USD")
     exclude_pairs: list[str] = Field(default_factory=list, description="Pairs to skip")
+
+    @field_validator("exclude_pairs", mode="before")
+    @classmethod
+    def normalize_exclude_pairs(cls, v):
+        """Convert None to empty list for web UI compatibility."""
+        return v if v is not None else []
 
 
 async def _fetch_top_pairs(top_n: int, min_volume_usd: float, exclude_pairs: set[str]) -> list[dict[str, Any]]:

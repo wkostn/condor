@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import TYPE_CHECKING
 
 from telegram.ext import ContextTypes
@@ -65,6 +65,12 @@ class Config(BaseModel):
         default="hyperliquid_perpetual",
         description="Connector for price data",
     )
+
+    @field_validator("assets", mode="before")
+    @classmethod
+    def normalize_assets(cls, v):
+        """Convert None to empty list for web UI compatibility."""
+        return v if v is not None else []
     social_volume_threshold: float = Field(
         default=2.0,
         description="Z-score threshold for social volume anomaly (2.0 = 2 std devs)",

@@ -23,7 +23,7 @@ import logging
 import statistics
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import TYPE_CHECKING
 
 from telegram.ext import ContextTypes
@@ -57,6 +57,12 @@ class Config(BaseModel):
         default=0.7,
         description="VPIN threshold to flag as high toxicity (0-1 scale)",
     )
+
+    @field_validator("trading_pairs", mode="before")
+    @classmethod
+    def normalize_trading_pairs(cls, v):
+        """Convert None to empty list for web UI compatibility."""
+        return v if v is not None else []
 
 
 def _calculate_vpin_from_trades(trades: list[dict[str, Any]], bucket_volume: float) -> float:
