@@ -22,7 +22,7 @@ class Config(BaseModel):
     """Scan top perpetual markets for volume/volatility profiles and classify as mature or degen."""
 
     connector: str = Field(
-        default="binance_perpetual", description="Exchange connector"
+        default="hyperliquid_perpetual", description="Exchange connector"
     )
     top_n: int = Field(default=100, description="Number of top pairs by 24h volume")
     lookback_hours: int = Field(default=4, description="Hours of 1m candle data")

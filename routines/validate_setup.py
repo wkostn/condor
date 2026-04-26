@@ -29,7 +29,7 @@ class Config(BaseModel):
 
     # Required: candidate info from high_vol_coin_levels
     trading_pair: str = Field(..., description="Trading pair (e.g., 'BTC-USDT')")
-    connector: str = Field(default="binance_perpetual", description="Perpetual connector")
+    connector: str = Field(default="hyperliquid_perpetual", description="Perpetual connector")
     bias: str = Field(..., description="LONG or SHORT")
     last_price: float = Field(..., description="Current price")
     

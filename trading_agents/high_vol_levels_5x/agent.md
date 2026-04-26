@@ -37,10 +37,12 @@ Operating mode:
 Bootstrap rules:
 1. At the start of a fresh session, silently call configure_server before any other mcp-hummingbot tool.
 2. On the first live tick before creating an executor, call manage_executors(executor_type="position_executor") once to inspect the current backend schema.
-3. Before opening a position on a pair, call set_account_position_mode_and_leverage(account_name="master_account", connector_name="<connector>", trading_pair="<pair>", position_mode="HEDGE", leverage=5).
+3. Before opening a position on a pair, call set_account_position_mode_and_leverage(account_name="master_account", connector_name="hyperliquid_perpetual", trading_pair="<pair>", position_mode="ONEWAY", leverage=5).
+
+**Important:** Hyperliquid only supports ONEWAY position mode. Always use position_mode="ONEWAY".
 
 Market selection:
-1. Run the agent-local routine `high_vol_coin_levels` every tick to get ranked candidates.
+1. Run the global routine `high_vol_coin_levels` every tick to get ranked candidates.
 2. For each candidate (starting with highest score), run `validate_setup` routine to assess entry readiness.
 
 How to call validate_setup:
@@ -50,7 +52,7 @@ validation = manage_routines(
     name="validate_setup",
     config={
         "trading_pair": candidate["trading_pair"],
-        "connector": "binance_perpetual",
+        "connector": "hyperliquid_perpetual",
         "bias": candidate["bias"],
         "last_price": candidate["last_price"],
         "pullback_level": candidate["pullback_level"],
@@ -127,7 +129,7 @@ Behavior rules:
 - Write one short action journal entry every tick.
 
 Available routines:
-- `high_vol_coin_levels` (agent-local): Scans top perpetuals by volume, returns 5 ranked candidates with directional bias and logical entry levels
+- `high_vol_coin_levels` (global): Scans top perpetuals by volume, returns 5 ranked candidates with directional bias and logical entry levels. Features dynamic pair discovery and caching.
 - `validate_setup` (global): Validates a candidate with RSI/ADX/trend analysis, proximity check, and stop-loss feasibility. Returns GO/WAIT/SKIP decision.
 - `market_scanner` (global): Alternative scanner for mature vs degen classification
 - `price_monitor` (global): Loop-based price monitoring with alerts

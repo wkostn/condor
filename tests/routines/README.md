@@ -8,6 +8,12 @@ Test scripts for validating routine functionality.
 - **test_validate_setup.py** - Basic test with mock BTC data
 - **test_live_validation.py** - Full integration test with live market data (scans candidates via high_vol_coin_levels, validates each with validate_setup)
 
+### list_available_pairs
+- **test_list_available_pairs.py** - Test dynamic pair discovery from Hyperliquid API
+
+### high_vol_coin_levels
+- **test_dynamic_pairs.py** - Test dynamic pair filtering and caching
+
 ### morning_scan
 - **test_morning_scan.py** - Test morning market scan routine
 

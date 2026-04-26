@@ -7,6 +7,9 @@ Documentation for Condor routines.
 ### validate_setup
 - **VALIDATE_SETUP_USAGE.md** - How to use the validate_setup routine from agents
 
+### list_available_pairs
+- **DYNAMIC_PAIR_DISCOVERY.md** - Dynamic exchange pair discovery (replaces hardcoded lists)
+
 ## Adding New Documentation
 
 When creating a new routine, document:

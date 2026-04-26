@@ -50,7 +50,7 @@ class Config(BaseModel):
     """Configuration for morning_scan routine."""
 
     connector: str = Field(
-        default="binance_perpetual",
+        default="hyperliquid_perpetual",
         description="Perpetual connector for candle data"
     )
     top_n: int = Field(

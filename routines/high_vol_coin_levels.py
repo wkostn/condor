@@ -6,10 +6,11 @@ import asyncio
 import logging
 import math
 import statistics
+from datetime import datetime, timedelta
 from typing import Any
 
 import aiohttp
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 from telegram.ext import ContextTypes
 
 from config_manager import get_client
@@ -20,24 +21,22 @@ logger = logging.getLogger(__name__)
 BINANCE_FUTURES_TICKER = "https://fapi.binance.com/fapi/v1/ticker/24hr"
 MAX_CONCURRENT = 8
 
+# Cache for available pairs to avoid repeated API calls
+_PAIRS_CACHE: dict[str, tuple[set[str], datetime]] = {}
+CACHE_TTL_MINUTES = 60  # Cache pairs list for 1 hour
+
 
 class Config(BaseModel):
     """Find liquid high-volatility perp candidates with directional bias and levels."""
 
-    connector: str = Field(default="binance_perpetual", description="Perpetual connector to use for candles")
-    top_n: int = Field(default=20, description="Top markets by external 24h quote volume to inspect")
+    connector: str = Field(default="hyperliquid_perpetual", description="Perpetual connector to use for candles")
+    top_n: int = Field(default=30, description="Top markets by external 24h quote volume to inspect (buffer for unavailable pairs)")
     candidates: int = Field(default=5, description="How many ranked candidates to return")
     interval: str = Field(default="5m", description="Candle interval for analysis")
     max_records: int = Field(default=72, description="How many candles to fetch per market")
     breakout_window: int = Field(default=12, description="Recent candles used for breakout and breakdown levels")
     min_volume_usd: float = Field(default=25_000_000, description="Minimum 24h quote volume in USD")
     exclude_pairs: list[str] = Field(default_factory=list, description="Pairs to skip")
-
-    @field_validator("exclude_pairs", mode="before")
-    @classmethod
-    def normalize_exclude_pairs(cls, v):
-        """Convert None to empty list for compatibility."""
-        return v if v is not None else []
 
 
 async def _fetch_top_pairs(top_n: int, min_volume_usd: float, exclude_pairs: set[str]) -> list[dict[str, Any]]:
@@ -91,7 +90,7 @@ async def _fetch_candles(
                 max_records=max_records,
             )
         except Exception as exc:
-            logger.debug("Candle fetch failed for %s: %s", trading_pair, exc)
+            logger.warning("Candle fetch failed for %s on %s: %s (pair may not exist on exchange)", trading_pair, connector, exc)
             return None
 
     if isinstance(result, list):
@@ -229,6 +228,83 @@ def _format_rows(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+async def _get_available_pairs_from_exchange(connector: str, quote_asset: str = "USDT") -> set[str]:
+    """Dynamically fetch available pairs from the exchange's public API.
+    
+    Uses caching to avoid repeated API calls (1 hour TTL).
+    """
+    # Check cache first
+    cache_key = f"{connector}:{quote_asset}"
+    now = datetime.now()
+    
+    if cache_key in _PAIRS_CACHE:
+        pairs, cached_at = _PAIRS_CACHE[cache_key]
+        if now - cached_at < timedelta(minutes=CACHE_TTL_MINUTES):
+            logger.debug(f"Using cached pairs for {connector} ({len(pairs)} pairs)")
+            return pairs
+    
+    # Fetch from exchange
+    try:
+        if connector == "hyperliquid_perpetual":
+            url = "https://api.hyperliquid.xyz/info"
+            payload = {"type": "meta"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+            
+            universe = data.get("universe", [])
+            pairs = set()
+            
+            for asset in universe:
+                if isinstance(asset, dict):
+                    name = asset.get("name", "")
+                    if name:
+                        pair = f"{name}-{quote_asset}"
+                        pairs.add(pair)
+            
+            logger.info(f"Fetched {len(pairs)} pairs from Hyperliquid API")
+            
+        elif connector == "binance_perpetual":
+            url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+            
+            symbols = data.get("symbols", [])
+            pairs = set()
+            
+            for symbol_info in symbols:
+                if not isinstance(symbol_info, dict):
+                    continue
+                
+                status = symbol_info.get("status", "")
+                quote = symbol_info.get("quoteAsset", "")
+                base = symbol_info.get("baseAsset", "")
+                
+                if status == "TRADING" and quote == quote_asset and base:
+                    pair = f"{base}-{quote}"
+                    pairs.add(pair)
+            
+            logger.info(f"Fetched {len(pairs)} pairs from Binance Perpetual API")
+            
+        else:
+            logger.warning(f"No dynamic pair fetching implemented for {connector}")
+            return set()
+        
+        # Cache the result
+        _PAIRS_CACHE[cache_key] = (pairs, now)
+        return pairs
+        
+    except Exception as exc:
+        logger.error(f"Failed to fetch available pairs from {connector}: {exc}")
+        # Return empty set and let individual candle fetches fail gracefully
+        return set()
+
+
 async def run(config: Config, context: ContextTypes.DEFAULT_TYPE) -> RoutineResult | str:
     client = await get_client(context._chat_id, context=context)
     if not client:
@@ -238,6 +314,22 @@ async def run(config: Config, context: ContextTypes.DEFAULT_TYPE) -> RoutineResu
     top_pairs = await _fetch_top_pairs(config.top_n, config.min_volume_usd, exclude_pairs)
     if not top_pairs:
         return "No liquid high-volatility candidates found"
+
+    # Dynamically fetch available pairs from the exchange
+    available_pairs = await _get_available_pairs_from_exchange(config.connector, "USDT")
+    
+    if available_pairs:
+        original_count = len(top_pairs)
+        top_pairs = [pair for pair in top_pairs if pair["trading_pair"] in available_pairs]
+        filtered_count = original_count - len(top_pairs)
+        
+        if filtered_count > 0:
+            logger.info(f"Filtered out {filtered_count} pairs not available on {config.connector} ({len(top_pairs)} remain)")
+        
+        if not top_pairs:
+            return f"None of the top volume coins are available on {config.connector}"
+    else:
+        logger.warning(f"Could not fetch available pairs from {config.connector}, proceeding without pre-filtering")
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
     candle_tasks = [
