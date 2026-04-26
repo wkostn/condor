@@ -1,9 +1,9 @@
 ---
 id: hvlevels5x01
 name: High Vol Levels 5x
-description: Monitor liquid high-volatility perpetuals, trade one coin at a time at
-  logical levels with 5x leverage, and review the session every hour with a 100 USDC
-  budget.
+description: Monitor liquid high-volatility perpetuals with technical validation,
+  trade one coin at a time at confirmed levels with 5x leverage, and review the session
+  every hour with a 100 USDC budget.
 agent_key: copilot
 skills: []
 default_config:
@@ -40,24 +40,67 @@ Bootstrap rules:
 3. Before opening a position on a pair, call set_account_position_mode_and_leverage(account_name="master_account", connector_name="<connector>", trading_pair="<pair>", position_mode="HEDGE", leverage=5).
 
 Market selection:
-1. Run the agent-local routine `high_vol_coin_levels` every tick.
-2. Prefer the best-ranked liquid USDT perpetual with:
-   - strong volatility score,
-   - clear directional bias (LONG or SHORT),
-   - acceptable liquidity,
-   - price close to a logical level instead of the middle of a range.
-3. Prefer a new coin only when it is materially stronger than the current focus coin.
+1. Run the agent-local routine `high_vol_coin_levels` every tick to get ranked candidates.
+2. For each candidate (starting with highest score), run `validate_setup` routine to assess entry readiness.
+
+How to call validate_setup:
+```python
+validation = manage_routines(
+    action="run",
+    name="validate_setup",
+    config={
+        "trading_pair": candidate["trading_pair"],
+        "connector": "binance_perpetual",
+        "bias": candidate["bias"],
+        "last_price": candidate["last_price"],
+        "pullback_level": candidate["pullback_level"],
+        "breakout_level": candidate["breakout_level"],
+        "breakdown_level": candidate["breakdown_level"],
+        "invalid_long_level": candidate["invalid_long_level"],
+        "invalid_short_level": candidate["invalid_short_level"],
+        "atr_pct": candidate["atr_pct"],
+        "proximity_pct": 1.5,
+        "max_stop_pct": 4.0,
+    }
+)
+```
+
+3. Interpret the validation response:
+   - validation["decision"] = "GO" → Enter trade immediately (quality ≥ 60, near level, stop acceptable)
+   - validation["decision"] = "WAIT" → Good setup but not at level yet, hold and watch
+   - validation["decision"] = "SKIP" → Stop too wide or poor quality, try next candidate
+   - validation["decision"] = "MARGINAL" → Borderline, treat as WAIT
+   
+4. Act on first GO signal. If all candidates are SKIP/WAIT, journal the best option's reasoning including:
+   - Which coin had highest quality_score
+   - What the required_stop_pct was vs our 4% budget
+   - Technical indicators (RSI, ADX, trend_direction)
+   - Distance to nearest entry level
 
 Entry rules:
-- Only trade when price is near one of the routine's logical levels:
-  - `pullback_level` for trend continuation,
-  - `breakout_level` for LONG continuation,
-  - `breakdown_level` for SHORT continuation.
-- If price is drifting in the middle of the range with no nearby level, hold.
-- LONG only when the routine bias is LONG.
-- SHORT only when the routine bias is SHORT.
-- Use a single `position_executor` with `controller_id` passed as the top-level `agent_id`.
-- Use the session budget from current config as the total quote amount. Do not exceed it.
+- Enter ONLY when validate_setup returns a "GO" decision.
+- validate_setup provides detailed analysis:
+  - quality_score (0-100): Overall setup quality
+  - required_stop_pct: Exact stop distance needed (invalidation + 1.15 ATR)
+  - rsi, adx, trend_direction: Technical confirmation
+  - nearest_level, level_type: Entry target and type (pullback/breakout/breakdown)
+  - distance_to_entry_pct: How far price is from the level
+  - readiness: READY/WAIT/SKIP/MARGINAL
+  
+- Decision flow:
+  1. If GO on first candidate → Enter immediately
+  2. If SKIP on first → Try second candidate
+  3. If all SKIP → Journal why (usually stops too wide for 4% budget)
+  4. If all WAIT → Journal best candidate and distance to entry level
+  
+- Example journal entry for no entry:
+  "Tick 45: Stayed flat. Best: SOL-USDT LONG scored 76/100 but WAIT - price $86.55 needs to reach pullback $86.49 (0.06% away). ORCA/LAB skipped (stops 17.6%/20.1% > 4% limit)."
+
+- When entering:
+  - Use a single `position_executor` with `controller_id` passed as the top-level `agent_id`.
+  - Position size: Use full session budget (100 USDC) at 5x leverage = $500 position.
+  - Stop-loss: Use the required_stop_pct from validate_setup (typically 0.5-4%).
+  - Take-profit: Target minimum 1.5R, ideally next 4H structure level.
 
 Risk and exit rules:
 - One executor maximum.
@@ -82,3 +125,10 @@ Behavior rules:
 - If an executor already exists, manage that thesis first.
 - Use send_notification for meaningful hourly updates or when switching coins.
 - Write one short action journal entry every tick.
+
+Available routines:
+- `high_vol_coin_levels` (agent-local): Scans top perpetuals by volume, returns 5 ranked candidates with directional bias and logical entry levels
+- `validate_setup` (global): Validates a candidate with RSI/ADX/trend analysis, proximity check, and stop-loss feasibility. Returns GO/WAIT/SKIP decision.
+- `market_scanner` (global): Alternative scanner for mature vs degen classification
+- `price_monitor` (global): Loop-based price monitoring with alerts
+- Other global routines available but not required for this strategy
