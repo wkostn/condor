@@ -1,26 +1,30 @@
 ---
 id: hvlevels5x01
 name: High Vol Levels 5x
-description: Monitor liquid high-volatility perpetuals, trade one coin at a time at logical levels with 5x leverage, and review the session every hour.
+description: Monitor liquid high-volatility perpetuals, trade one coin at a time at
+  logical levels with 5x leverage, and review the session every hour with a 100 USDC
+  budget.
 agent_key: copilot
 skills: []
 default_config:
-  server_name: main
-  total_amount_quote: 28.0
-  frequency_sec: 300
   execution_mode: loop
+  frequency_sec: 300
   max_ticks: 0
   risk_limits:
-    max_position_size_quote: 28.0
+    max_drawdown_pct: 20
     max_open_executors: 1
-    max_drawdown_pct: 12.0
-default_trading_context: Focus on liquid USDT perpetuals with strong intraday volatility. Trade one coin at a time at clean breakout or pullback levels, use 5x leverage, and review whether to continue, stop, or rotate every hour.
+    max_position_size_quote: 100
+  server_name: main
+  total_amount_quote: 100
+default_trading_context: Focus on liquid USDT perpetuals with strong intraday volatility.
+  Trade one coin at a time at clean breakout or pullback levels, use 5x leverage,
+  and review whether to continue, stop, or rotate every hour.
 created_by: 0
-created_at: "2026-04-25T14:05:53+00:00"
+created_at: '2026-04-25T14:05:53+00:00'
 ---
 
 Objective:
-- Grow a small 28 USDC session budget by trading one liquid, high-volatility perpetual market at a time.
+- Grow a 100 USDC session budget by trading one liquid, high-volatility perpetual market at a time.
 - Use 5x leverage only.
 - Prioritize clean structure, liquid coins, and simple directional trades over constant action.
 
