@@ -38,8 +38,11 @@ class Config(BaseModel):
     """Configuration for vpin_calc routine."""
 
     trading_pairs: list[str] = Field(
-        default_factory=lambda: ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
-        description="List of pairs to analyze",
+        default_factory=lambda: [
+            "BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD",
+            "AVAX-USD", "MATIC-USD", "LINK-USD", "UNI-USD", "ATOM-USD"
+        ],
+        description="List of pairs to analyze (Hyperliquid USD format)",
     )
     connector: str = Field(
         default="hyperliquid_perpetual",
@@ -50,8 +53,8 @@ class Config(BaseModel):
         description="Number of volume buckets for VPIN calculation",
     )
     bucket_volume_usd: float = Field(
-        default=1_000_000,
-        description="Target USD volume per bucket",
+        default=500_000,
+        description="Target USD volume per bucket (lowered for mid-cap coins)",
     )
     high_vpin_threshold: float = Field(
         default=0.7,

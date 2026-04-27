@@ -149,7 +149,9 @@ def build_tick_prompt(
     if agent_id:
         tick_info += f"\nAgent ID: {agent_id}"
         if not is_dry_run:
+            # Use the persistent agent ID (not session-specific) for executor ownership
             tick_info += f'\nPass controller_id="{agent_id}" as a TOP-LEVEL arg to manage_executors (not inside executor_config).'
+            tick_info += '\nNote: This controller_id is persistent across sessions, so you can see and manage executors from previous sessions.'
     sections.append(tick_info)
 
     # Run-once mode note
