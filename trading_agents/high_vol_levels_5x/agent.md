@@ -179,7 +179,9 @@ Entry rules:
             "risk_per_trade_pct": 5.0,
             "stop_loss_pct": validation["required_stop_pct"],
             "leverage": actual_leverage,
-            "entry_price": candidate["last_price"]
+            "entry_price": candidate["last_price"],
+            "safe_threshold_pct": 3.0,
+            "aggressive_threshold_pct": 6.0,
         }
     )
     ```
@@ -223,7 +225,7 @@ Behavior rules:
 Available routines:
 - `high_vol_coin_levels` (global): Hyperliquid-first scanner. Single `metaAndAssetCtxs` API call gets all 230 perps with live price, 24h volume, funding rate, open interest. Then fetches candles in parallel for top candidates. Now computes technical indicators per candidate. Returns ranked candidates with: trading_pair, bias (LONG/SHORT), score, last_price, change_24h_pct, quote_volume_usd, atr_pct, momentum_pct, funding_rate, open_interest_usd, max_leverage, category (layer1/meme/defi/ai/gaming/layer2/infra), **rsi, adx, bb_position, trend_strength, volume_spike, ema_fast, ema_slow**, pullback_level, breakout_level, breakdown_level, invalid_long_level, invalid_short_level. Executes in ~2 seconds.
 - `validate_setup` (global): Validates a candidate with RSI/ADX/trend analysis on higher-timeframe candles, proximity check, and stop-loss feasibility. Returns GO/WAIT/SKIP decision with quality score. Complements the scan's 5m indicators with its own independent analysis.
-- `risk_calculator` (global): Computes optimal position size based on account equity, risk %, stop loss %, and leverage. Returns position size, risk amount, and safety recommendation.
+- `risk_calculator` (global): Computes optimal position size based on account equity, risk %, stop loss %, and leverage. Returns position size, risk amount, and safety recommendation (SAFE/AGGRESSIVE/EXCESSIVE). Thresholds are configurable via `safe_threshold_pct` (default 2.0) and `aggressive_threshold_pct` (default 5.0). This agent uses 3.0/6.0 to match our 5% risk-per-trade budget.
 - `liquidity_checker` (global): **Run before every trade entry.** Verifies sufficient liquidity for intended position size. Returns liquidity rating, slippage risk, and suggested max position size. Block entry if recommendation is "AVOID".
 - `correlation_check` (global): Analyzes correlation between two pairs over recent hours. Returns correlation coefficient and recommendation (DIVERSIFIED/NEUTRAL/REDUNDANT). Use if considering rotation to ensure the new coin isn't just a correlated proxy of the old one.
 - `funding_monitor` (global): Fetches funding rates, OI, long/short ratios from Binance for deeper derivatives context. Run on hourly reviews for the top 5-10 coins to spot crowded trades or liquidation cascades.

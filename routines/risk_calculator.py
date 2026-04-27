@@ -18,12 +18,14 @@ class Config(BaseModel):
     """Risk calculator configuration."""
     
     account_equity: float = Field(default=100.0, description="Total account equity in USD")
-    risk_per_trade_pct: float = Field(default=2.0, description="Max % of equity to risk per trade (1-5)")
+    risk_per_trade_pct: float = Field(default=2.0, description="Max % of equity to risk per trade (1-10)")
     stop_loss_pct: float = Field(default=2.0, description="Stop loss distance as % (0.5-10)")
     leverage: int = Field(default=5, description="Leverage multiplier (1-50)")
     entry_price: float = Field(default=0.0, description="Planned entry price")
     min_position_usd: float = Field(default=10.0, description="Minimum position size in USD")
     max_position_usd: float = Field(default=500.0, description="Maximum position size in USD")
+    safe_threshold_pct: float = Field(default=2.0, description="Risk % at or below this = SAFE")
+    aggressive_threshold_pct: float = Field(default=5.0, description="Risk % at or below this = AGGRESSIVE, above = EXCESSIVE")
 
 
 async def run(config: Config, context: ContextTypes.DEFAULT_TYPE) -> RoutineResult | str:
@@ -64,9 +66,9 @@ async def run(config: Config, context: ContextTypes.DEFAULT_TYPE) -> RoutineResu
         quantity = position_size_usd / config.entry_price
     
     # Risk assessment
-    if actual_risk_pct <= 2.0:
+    if actual_risk_pct <= config.safe_threshold_pct:
         recommendation = "SAFE"
-    elif actual_risk_pct <= 3.5:
+    elif actual_risk_pct <= config.aggressive_threshold_pct:
         recommendation = "AGGRESSIVE"
     else:
         recommendation = "EXCESSIVE"
