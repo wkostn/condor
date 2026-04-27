@@ -5,6 +5,7 @@ description: Monitor liquid high-volatility perpetuals with technical validation
   trade one coin at a time at confirmed levels with 5x leverage, and review the session
   every hour with a 100 USDC budget.
 agent_key: copilot
+model: GPT-5 Mini (GitHub Copilot)
 skills: []
 default_config:
   execution_mode: loop
@@ -36,9 +37,18 @@ Operating mode:
 
 Bootstrap rules:
 1. At the start of a fresh session, silently call configure_server before any other mcp-hummingbot tool.
-2. On the first live tick before creating an executor, call manage_executors(executor_type="position_executor") once to inspect the current backend schema.
-3. Before opening a position on a pair, call set_account_position_mode_and_leverage(account_name="master_account", connector_name="hyperliquid_perpetual", trading_pair="<pair>", leverage=5).
+2. On the first live tick before creat:
+   a. Check the pair's maximum leverage from Hyperliquid metadata (included in high_vol_coin_levels results as max_leverage field)
+   b. Use the LOWER of: desired leverage (5x) OR pair's max_leverage
+   c. Call set_account_position_mode_and_leverage(account_name="master_account", connector_name="hyperliquid_perpetual", trading_pair="<pair>", leverage=<actual_leverage>)
 
+**Important:** Hyperliquid does NOT support position_mode parameter - it only allows leverage setting. Do NOT pass position_mode parameter to set_account_position_mode_and_leverage(). Hyperliquid always operates in ONEWAY mode by default.
+
+**Leverage Rules:**
+- Each pair on Hyperliquid has its own max_leverage limit (e.g., BTC=40x, ETH=25x, HYPER=3x)
+- high_vol_coin_levels routine returns max_leverage for each candidate
+- ALWAYS use: actual_leverage = min(5, candidate["max_leverage"])
+- Example: If HYPER-USD has max_leverage=3, use 3x not 5x
 **Important:** Hyperliquid does NOT support position_mode parameter - it only allows leverage setting. Do NOT pass position_mode parameter to set_account_position_mode_and_leverage(). Hyperliquid always operates in ONEWAY mode by default.
 
 Market selection:
@@ -129,8 +139,11 @@ Behavior rules:
 - Write one short action journal entry every tick.
 
 Available routines:
-- `high_vol_coin_levels` (global): Scans top perpetuals by volume, returns 5 ranked candidates with directional bias and logical entry levels. Features dynamic pair discovery and caching.
-- `validate_setup` (global): Validates a candidate with RSI/ADX/trend analysis, proximity check, and stop-loss feasibility. Returns GO/WAIT/SKIP decision.
+- `high_vol_coin_levels` (global): Hyperliquid-first scanner. Single `metaAndAssetCtxs` API call gets all 230 perps with live price, 24h volume, funding rate, open interest. Then fetches candles in parallel for top candidates. Returns ranked candidates with: trading_pair, bias (LONG/SHORT), score, last_price, change_24h_pct, quote_volume_usd, atr_pct, momentum_pct, funding_rate, open_interest_usd, max_leverage, category (layer1/meme/defi/ai/gaming/layer2/infra), pullback_level, breakout_level, breakdown_level, invalid_long_level, invalid_short_level. Executes in ~2 seconds.
+- `validate_setup` (global): Validates a candidate with RSI/ADX/trend analysis, proximity check, and stop-loss feasibility. Returns GO/WAIT/SKIP decision with quality score.
+- `risk_calculator` (global): Computes optimal position size based on account equity, risk %, stop loss %, and leverage. Returns position size, risk amount, and safety recommendation.
+- `correlation_check` (global): Analyzes correlation between two pairs over recent hours. Returns correlation coefficient and recommendation (DIVERSIFIED/NEUTRAL/REDUNDANT).
+- `liquidity_checker` (global): Verifies sufficient liquidity for intended position size. Returns liquidity rating, slippage risk, and suggested max position size.
 - `market_scanner` (global): Alternative scanner for mature vs degen classification
 - `price_monitor` (global): Loop-based price monitoring with alerts
 - Other global routines available but not required for this strategy
