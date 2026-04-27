@@ -64,8 +64,22 @@ class Config(BaseModel):
     @field_validator("trading_pairs", mode="before")
     @classmethod
     def normalize_trading_pairs(cls, v):
-        """Convert None to empty list for web UI compatibility."""
-        return v if v is not None else []
+        """Convert None or string to list for web UI compatibility.
+        
+        Web UI may send: '["BTC-USD"]' as string instead of list.
+        """
+        if v is None:
+            return []
+        if isinstance(v, str):
+            import json
+            try:
+                # Try parsing as JSON first
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, ValueError):
+                # If not JSON, treat as comma-separated
+                return [s.strip() for s in v.split(",") if s.strip()]
+        return v if isinstance(v, list) else []
 
 
 def _calculate_vpin_from_trades(trades: list[dict[str, Any]], bucket_volume: float) -> float:

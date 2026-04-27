@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 class Config(BaseModel):
     """Correlation checker configuration."""
     
-    trading_pair_a: str = Field(description="First trading pair (e.g., BTC-USD)")
-    trading_pair_b: str = Field(description="Second trading pair (e.g., ETH-USD)")
+    trading_pair_a: str = Field(default="BTC-USD", description="First trading pair (e.g., BTC-USD)")
+    trading_pair_b: str = Field(default="ETH-USD", description="Second trading pair (e.g., ETH-USD)")
     connector: str = Field(default="hyperliquid_perpetual", description="Exchange connector")
     lookback_hours: int = Field(default=24, description="Hours of data for correlation (4-168)")
     interval: str = Field(default="1h", description="Candle interval (1m, 5m, 15m, 1h, 4h)")

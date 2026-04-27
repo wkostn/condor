@@ -17,9 +17,9 @@ logger = logging.getLogger(__name__)
 class Config(BaseModel):
     """Liquidity checker configuration."""
     
-    trading_pair: str = Field(description="Trading pair to check (e.g., BTC-USD)")
+    trading_pair: str = Field(default="BTC-USD", description="Trading pair to check (e.g., BTC-USD)")
     connector: str = Field(default="hyperliquid_perpetual", description="Exchange connector")
-    position_size_usd: float = Field(description="Intended position size in USD")
+    position_size_usd: float = Field(default=1000.0, description="Intended position size in USD")
     lookback_hours: int = Field(default=24, description="Hours to analyze (4-48)")
     min_volume_multiple: float = Field(default=50.0, description="Position must be < X% of avg volume")
 

@@ -50,8 +50,10 @@ class Config(BaseModel):
     """Configuration for news_reader routine."""
 
     assets: list[str] = Field(
-        default_factory=lambda: ["BTC", "ETH"],
-        description="List of asset symbols to fetch news for (e.g., ['BTC', 'ETH', 'SOL'])",
+        default_factory=lambda: [
+            "BTC", "ETH", "SOL", "DOGE", "XRP", "AVAX", "MATIC", "LINK", "UNI", "ATOM"
+        ],
+        description="List of asset symbols to fetch news for (top 10 Hyperliquid volume)",
     )
     lookback_hours: int = Field(
         default=24,
