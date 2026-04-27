@@ -381,10 +381,17 @@ def compute_technical_indicators(
         return None
 
 
-def run(candles: list[dict[str, Any]], config: Optional[Config] = None) -> Optional[TechnicalIndicators]:
+def compute(candles: list[dict[str, Any]], config: Optional[Config] = None) -> Optional[TechnicalIndicators]:
     """Main entry point for the routine.
     
     This is a utility routine that can be called by other routines (like morning_scan)
-    or standalone for testing.
+    or standalone for testing. Not meant to be run directly from the web UI.
+    
+    Args:
+        candles: List of OHLCV candle dictionaries
+        config: Optional configuration for indicator periods
+        
+    Returns:
+        TechnicalIndicators object or None if computation fails
     """
     return compute_technical_indicators(candles, config)
