@@ -202,6 +202,67 @@ def _atr_pct(
     return (atr / last_close) * 100
 
 
+def _rsi(closes: list[float], period: int = 14) -> float:
+    """Relative Strength Index (0-100). <30 oversold, >70 overbought."""
+    if len(closes) < period + 1:
+        return 50.0
+    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(c, 0) for c in changes]
+    losses = [abs(min(c, 0)) for c in changes]
+    avg_gain = sum(gains[-period:]) / period
+    avg_loss = sum(losses[-period:]) / period
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def _adx(highs: list[float], lows: list[float], closes: list[float], period: int = 14) -> float:
+    """Average Directional Index (0-100). >25 = trending, <20 = ranging."""
+    if len(closes) < period * 2:
+        return 0.0
+    tr_list = [
+        max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+        for i in range(1, len(closes))
+    ]
+    plus_dm, minus_dm = [], []
+    for i in range(1, len(highs)):
+        up = highs[i] - highs[i - 1]
+        down = lows[i - 1] - lows[i]
+        if up > down and up > 0:
+            plus_dm.append(up)
+            minus_dm.append(0)
+        elif down > up and down > 0:
+            plus_dm.append(0)
+            minus_dm.append(down)
+        else:
+            plus_dm.append(0)
+            minus_dm.append(0)
+    atr_smooth = sum(tr_list[-period:]) / period
+    if atr_smooth == 0:
+        return 0.0
+    plus_di = 100 * (sum(plus_dm[-period:]) / period) / atr_smooth
+    minus_di = 100 * (sum(minus_dm[-period:]) / period) / atr_smooth
+    di_sum = plus_di + minus_di
+    if di_sum == 0:
+        return 0.0
+    return 100 * abs(plus_di - minus_di) / di_sum
+
+
+def _bollinger_position(closes: list[float], period: int = 20, std_mult: float = 2.0) -> float:
+    """Position within Bollinger Bands: -1 (lower) to +1 (upper)."""
+    if len(closes) < period:
+        return 0.0
+    recent = closes[-period:]
+    middle = sum(recent) / period
+    std = statistics.stdev(recent) if len(recent) > 1 else 0
+    upper = middle + std * std_mult
+    lower = middle - std * std_mult
+    if upper == lower:
+        return 0.0
+    return max(-1.0, min(1.0, (closes[-1] - middle) / ((upper - lower) / 2)))
+
+
 def _pct_change(current: float, previous: float) -> float:
     if previous == 0:
         return 0.0
@@ -286,21 +347,62 @@ def _analyze_pair(
     if volume_factor <= 0:
         return None
 
-    # Directional bias
-    if ema_fast > ema_slow and last_price >= ema_fast and momentum_pct > 0:
+    # ── Technical indicators ─────────────────────────────────────────
+    rsi = _rsi(closes)
+    adx = _adx(highs, lows, closes)
+    bb_pos = _bollinger_position(closes)
+
+    # Volume spike: recent 4-bar avg vs 24-bar avg
+    vol_recent = sum(volumes[-4:]) / 4 if len(volumes) >= 4 else volume_factor
+    volume_spike = vol_recent > volume_factor * 1.5
+
+    # Trend strength classification
+    if adx >= 30:
+        trend_strength = "strong"
+    elif adx >= 20:
+        trend_strength = "moderate"
+    else:
+        trend_strength = "weak"
+
+    # ── Directional bias (enhanced with RSI + ADX) ───────────────────
+    ema_bullish = ema_fast > ema_slow and last_price >= ema_fast
+    ema_bearish = ema_fast < ema_slow and last_price <= ema_fast
+    rsi_supports_long = rsi < 70  # not overbought
+    rsi_supports_short = rsi > 30  # not oversold
+
+    if ema_bullish and momentum_pct > 0 and rsi_supports_long:
         bias = "LONG"
-    elif ema_fast < ema_slow and last_price <= ema_fast and momentum_pct < 0:
+    elif ema_bearish and momentum_pct < 0 and rsi_supports_short:
         bias = "SHORT"
     else:
         bias = "NEUTRAL"
 
-    # Composite score: volatility + momentum + volume
+    # ── Composite score (volatility + momentum + technicals) ─────────
+    # Base: volatility and momentum
     score = (
-        atr_pct * 2.2
+        atr_pct * 2.0
         + abs(momentum_pct) * 0.8
-        + realized_vol_pct * 0.7
-        + min(pair["quote_volume"] / 100_000_000, 5.0)
+        + realized_vol_pct * 0.5
+        + min(pair["quote_volume"] / 100_000_000, 4.0)
     )
+    # Trend strength bonus (ADX)
+    if adx >= 30:
+        score += 3.0
+    elif adx >= 20:
+        score += 1.5
+    # RSI extremes bonus (oversold for LONG, overbought for SHORT)
+    if bias == "LONG" and rsi < 40:
+        score += 2.0  # buying oversold with bullish structure
+    elif bias == "SHORT" and rsi > 60:
+        score += 2.0  # selling overbought with bearish structure
+    # BB position bonus (at bands = mean-reversion opportunity)
+    if bias == "LONG" and bb_pos < -0.5:
+        score += 1.5  # near lower band
+    elif bias == "SHORT" and bb_pos > 0.5:
+        score += 1.5  # near upper band
+    # Volume spike bonus
+    if volume_spike:
+        score += 1.5
 
     rp = lambda v: _round_price(v, last_price)
 
@@ -329,6 +431,14 @@ def _analyze_pair(
         "category": pair.get("category", "other"),
         "funding_rate": pair.get("funding_rate", 0),
         "open_interest_usd": pair.get("open_interest_usd", 0),
+        # Technical indicators
+        "rsi": round(rsi, 1),
+        "adx": round(adx, 1),
+        "bb_position": round(bb_pos, 3),
+        "trend_strength": trend_strength,
+        "volume_spike": volume_spike,
+        "ema_fast": rp(ema_fast),
+        "ema_slow": rp(ema_slow),
         **levels,
     }
 
@@ -339,11 +449,14 @@ def _format_rows(rows: list[dict[str, Any]]) -> str:
     lines = ["High-volatility perp candidates:"]
     for i, r in enumerate(rows, start=1):
         fp = lambda v: _fmt_price(v)
+        spike = "⚡" if r.get("volume_spike") else ""
         lines.append(
             f"{i}. {r['trading_pair']} | {r['bias']} | score {r['score']:.2f} | "
             f"last {fp(r['last_price'])} | ATR {r['atr_pct']:.2f}% | "
+            f"RSI {r.get('rsi',50):.0f} | ADX {r.get('adx',0):.0f} ({r.get('trend_strength','?')}) | "
+            f"BB {r.get('bb_position',0):+.2f} | "
             f"24h chg {r['change_24h_pct']:+.2f}% | max_lev {r.get('max_leverage',1)}x | "
-            f"vol ${r['quote_volume_usd']:,.0f} | "
+            f"vol ${r['quote_volume_usd']:,.0f}{spike} | "
             f"funding {r.get('funding_rate',0):.6f} | "
             f"cat {r.get('category','?')} | "
             f"pullback {fp(r['pullback_level'])} | breakout {fp(r['breakout_level'])} | "
@@ -544,12 +657,19 @@ async def run(
             "last_price",
             "change_24h_pct",
             "atr_pct",
+            "rsi",
+            "adx",
+            "bb_position",
+            "trend_strength",
+            "volume_spike",
             "momentum_pct",
             "quote_volume_usd",
             "funding_rate",
             "open_interest_usd",
             "max_leverage",
             "category",
+            "ema_fast",
+            "ema_slow",
             "pullback_level",
             "breakout_level",
             "breakdown_level",
