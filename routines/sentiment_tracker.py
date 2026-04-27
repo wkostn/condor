@@ -54,9 +54,7 @@ class Config(BaseModel):
     """Configuration for sentiment_tracker routine."""
 
     assets: list[str] = Field(
-        default_factory=lambda: [
-            "BTC", "ETH", "SOL", "DOGE", "XRP", "AVAX", "MATIC", "LINK", "UNI", "ATOM"
-        ],
+        default=["BTC", "ETH", "SOL", "DOGE", "XRP", "AVAX", "MATIC", "LINK", "UNI", "ATOM"],
         description="List of asset symbols to analyze (top 10 Hyperliquid volume)",
     )
     lookback_hours: int = Field(

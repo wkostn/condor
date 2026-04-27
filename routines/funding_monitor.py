@@ -38,10 +38,7 @@ class Config(BaseModel):
     """Configuration for funding_monitor routine."""
 
     trading_pairs: list[str] = Field(
-        default_factory=lambda: [
-            "BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD",
-            "AVAX-USD", "MATIC-USD", "LINK-USD", "UNI-USD", "ATOM-USD"
-        ],
+        default=["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD", "AVAX-USD", "MATIC-USD", "LINK-USD", "UNI-USD", "ATOM-USD"],
         description="List of pairs to monitor (Hyperliquid USD format)",
     )
     high_funding_threshold: float = Field(

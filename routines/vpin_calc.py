@@ -38,10 +38,7 @@ class Config(BaseModel):
     """Configuration for vpin_calc routine."""
 
     trading_pairs: list[str] = Field(
-        default_factory=lambda: [
-            "BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD",
-            "AVAX-USD", "MATIC-USD", "LINK-USD", "UNI-USD", "ATOM-USD"
-        ],
+        default=["BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "XRP-USD", "AVAX-USD", "MATIC-USD", "LINK-USD", "UNI-USD", "ATOM-USD"],
         description="List of pairs to analyze (Hyperliquid USD format)",
     )
     connector: str = Field(
