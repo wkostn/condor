@@ -1,9 +1,8 @@
 ---
 id: hvlevels5x01
 name: High Vol Levels 5x
-description: Monitor liquid high-volatility perpetuals with technical validation,
-  trade one coin at a time at confirmed levels with 5x leverage, and review the session
-  every hour with a 100 USDC budget.
+description: Trade high-volatility Hyperliquid perpetuals one coin at a time at confirmed
+  levels with up to 5x leverage. Includes low/mid-cap coins. Reviews hourly.
 agent_key: copilot
 model: GPT-5 Mini (GitHub Copilot)
 skills: []
@@ -12,22 +11,23 @@ default_config:
   frequency_sec: 300
   max_ticks: 0
   risk_limits:
-    max_drawdown_pct: 20
+    max_drawdown_pct: 25
     max_open_executors: 1
-    max_position_size_quote: 100
+    max_position_size_quote: 140
   server_name: main
-  total_amount_quote: 100
-default_trading_context: Focus on liquid USDT perpetuals with strong intraday volatility.
-  Trade one coin at a time at clean breakout or pullback levels, use 5x leverage,
-  and review whether to continue, stop, or rotate every hour.
+  total_amount_quote: 140
+default_trading_context: Trade Hyperliquid USD perpetuals with strong intraday volatility,
+  including mid-cap and low-cap coins (meme, defi, ai, gaming). One coin at a time
+  at clean breakout or pullback levels, up to 5x leverage, review every hour.
 created_by: 0
 created_at: '2026-04-25T14:05:53+00:00'
 ---
 
 Objective:
-- Grow a 100 USDC session budget by trading one liquid, high-volatility perpetual market at a time.
-- Use 5x leverage only.
-- Prioritize clean structure, liquid coins, and simple directional trades over constant action.
+- Grow a 140 USDC session budget by trading one high-volatility Hyperliquid perpetual at a time.
+- Use up to 5x leverage (lower for low-cap coins with max_leverage < 5).
+- Include mid-cap and low-cap coins (meme, defi, ai, gaming) — not just blue chips.
+- Prioritize clean structure and simple directional trades over constant action.
 
 Operating mode:
 - Default cadence is one tick every 5 minutes.
@@ -49,11 +49,20 @@ Bootstrap rules:
 - high_vol_coin_levels routine returns max_leverage for each candidate
 - ALWAYS use: actual_leverage = min(5, candidate["max_leverage"])
 - Example: If HYPER-USD has max_leverage=3, use 3x not 5x
-**Important:** Hyperliquid does NOT support position_mode parameter - it only allows leverage setting. Do NOT pass position_mode parameter to set_account_position_mode_and_leverage(). Hyperliquid always operates in ONEWAY mode by default.
 
 Market selection:
 1. Run the global routine `high_vol_coin_levels` every tick to get ranked candidates.
+   - Config: `{"candidates": 5, "top_n": 30, "min_volume_usd": 500000}` — includes mid/low-cap coins.
 2. For each candidate (starting with highest score), run `validate_setup` routine to assess entry readiness.
+
+How to call high_vol_coin_levels:
+```python
+scan = manage_routines(
+    action="run",
+    name="high_vol_coin_levels",
+    config={"candidates": 5, "top_n": 30, "min_volume_usd": 500000}
+)
+```
 
 How to call validate_setup:
 ```python
@@ -71,8 +80,8 @@ validation = manage_routines(
         "invalid_long_level": candidate["invalid_long_level"],
         "invalid_short_level": candidate["invalid_short_level"],
         "atr_pct": candidate["atr_pct"],
-        "proximity_pct": 1.5,
-        "max_stop_pct": 4.0,
+        "proximity_pct": 2.0,
+        "max_stop_pct": 6.0,
     }
 )
 ```
@@ -85,7 +94,7 @@ validation = manage_routines(
    
 4. Act on first GO signal. If all candidates are SKIP/WAIT, journal the best option's reasoning including:
    - Which coin had highest quality_score
-   - What the required_stop_pct was vs our 4% budget
+   - What the required_stop_pct was vs our 6% budget
    - Technical indicators (RSI, ADX, trend_direction)
    - Distance to nearest entry level
 
@@ -102,16 +111,29 @@ Entry rules:
 - Decision flow:
   1. If GO on first candidate → Enter immediately
   2. If SKIP on first → Try second candidate
-  3. If all SKIP → Journal why (usually stops too wide for 4% budget)
+  3. If all SKIP → Journal why (usually stops too wide for 6% budget)
   4. If all WAIT → Journal best candidate and distance to entry level
   
 - Example journal entry for no entry:
-  "Tick 45: Stayed flat. Best: SOL-USDT LONG scored 76/100 but WAIT - price $86.55 needs to reach pullback $86.49 (0.06% away). ORCA/LAB skipped (stops 17.6%/20.1% > 4% limit)."
+  "Tick 45: Stayed flat. Best: PENGU-USD SHORT scored 76/100 but WAIT - price $0.0097 needs to reach pullback $0.00965 (0.5% away). MON/BIO skipped (stops 8.1%/7.2% > 6% limit)."
 
 - When entering:
   - Use a single `position_executor` with `controller_id` passed as the top-level `agent_id`.
-  - Position size: Use full session budget (100 USDC) at 5x leverage = $500 position.
-  - Stop-loss: Use the required_stop_pct from validate_setup (typically 0.5-4%).
+  - Before placing, call `risk_calculator` to get exact position sizing:
+    ```python
+    risk = manage_routines(
+        action="run", name="risk_calculator",
+        config={
+            "account_equity": 140,
+            "risk_per_trade_pct": 5.0,
+            "stop_loss_pct": validation["required_stop_pct"],
+            "leverage": actual_leverage,
+            "entry_price": candidate["last_price"]
+        }
+    )
+    ```
+  - Use the returned `position_size_quote` as the `amount_quote` for the executor.
+  - Stop-loss: Use the required_stop_pct from validate_setup (typically 0.5-6%).
   - Take-profit: Target minimum 1.5R, ideally next 4H structure level.
 
 Risk and exit rules:
