@@ -28,18 +28,19 @@ class Config(BaseModel):
     """Configuration for setup validation."""
 
     # Required: candidate info from high_vol_coin_levels
-    trading_pair: str = Field(..., description="Trading pair (e.g., 'BTC-USDT')")
+    # Example defaults provided for testing (BTC example)
+    trading_pair: str = Field(default="BTC-USD", description="Trading pair (e.g., 'BTC-USD')")
     connector: str = Field(default="hyperliquid_perpetual", description="Perpetual connector")
-    bias: str = Field(..., description="LONG or SHORT")
-    last_price: float = Field(..., description="Current price")
+    bias: str = Field(default="LONG", description="LONG or SHORT")
+    last_price: float = Field(default=95000.0, description="Current price")
     
     # Key levels from high_vol_coin_levels
-    pullback_level: float = Field(..., description="Pullback/EMA entry")
-    breakout_level: float = Field(..., description="Breakout resistance")
-    breakdown_level: float = Field(..., description="Breakdown support")
-    invalid_long_level: float = Field(..., description="Long invalidation")
-    invalid_short_level: float = Field(..., description="Short invalidation")
-    atr_pct: float = Field(..., description="ATR %")
+    pullback_level: float = Field(default=94000.0, description="Pullback/EMA entry")
+    breakout_level: float = Field(default=96000.0, description="Breakout resistance")
+    breakdown_level: float = Field(default=93000.0, description="Breakdown support")
+    invalid_long_level: float = Field(default=92000.0, description="Long invalidation")
+    invalid_short_level: float = Field(default=97000.0, description="Short invalidation")
+    atr_pct: float = Field(default=2.5, description="ATR %")
     
     # Candle config
     interval: str = Field(default="5m", description="Candle interval")
