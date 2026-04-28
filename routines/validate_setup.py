@@ -84,8 +84,8 @@ def _validate_setup(config: Config, tech: Any) -> dict[str, Any]:
             level_type = "breakout"
             dist_to_entry = dist_breakout
         
-        # Stop would be below invalidation
-        stop_level = config.invalid_long_level - (config.last_price * config.atr_pct * 0.15 / 100)
+        # Stop would be below invalidation (buffer = 1.15 × ATR beyond the level)
+        stop_level = config.invalid_long_level - (config.last_price * config.atr_pct * 1.15 / 100)
         required_stop_pct = _distance_pct(config.last_price, stop_level)
         
     elif config.bias == "SHORT":
@@ -102,8 +102,8 @@ def _validate_setup(config: Config, tech: Any) -> dict[str, Any]:
             level_type = "breakdown"
             dist_to_entry = dist_breakdown
         
-        # Stop would be above invalidation
-        stop_level = config.invalid_short_level + (config.last_price * config.atr_pct * 0.15 / 100)
+        # Stop would be above invalidation (buffer = 1.15 × ATR beyond the level)
+        stop_level = config.invalid_short_level + (config.last_price * config.atr_pct * 1.15 / 100)
         required_stop_pct = _distance_pct(config.last_price, stop_level)
         
     else:

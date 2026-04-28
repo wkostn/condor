@@ -367,12 +367,20 @@ def _analyze_pair(
     # ── Directional bias (enhanced with RSI + ADX) ───────────────────
     ema_bullish = ema_fast > ema_slow and last_price >= ema_fast
     ema_bearish = ema_fast < ema_slow and last_price <= ema_fast
-    rsi_supports_long = rsi < 70  # not overbought
-    rsi_supports_short = rsi > 30  # not oversold
 
-    if ema_bullish and momentum_pct > 0 and rsi_supports_long:
+    # RSI extreme thresholds for mean-reversion signals
+    rsi_extreme_oversold = rsi < 30
+    rsi_extreme_overbought = rsi > 70
+
+    if rsi_extreme_oversold:
+        # Extreme oversold → LONG regardless of EMA (mean-reversion)
         bias = "LONG"
-    elif ema_bearish and momentum_pct < 0 and rsi_supports_short:
+    elif rsi_extreme_overbought:
+        # Extreme overbought → SHORT regardless of EMA (mean-reversion)
+        bias = "SHORT"
+    elif ema_bullish and momentum_pct > 0 and rsi < 70:
+        bias = "LONG"
+    elif ema_bearish and momentum_pct < 0 and rsi > 30:
         bias = "SHORT"
     else:
         bias = "NEUTRAL"
@@ -625,11 +633,11 @@ async def run(
         if not candles:
             continue
         result = _analyze_pair(pair, candles, config.breakout_window)
-        if result and result["bias"] != "NEUTRAL":
+        if result:
             analyzed.append(result)
 
     if not analyzed:
-        return "No directional high-volatility candidates found"
+        return "No high-volatility candidates found"
 
     # ── Step 5: Rank and return ──────────────────────────────────────
     analyzed.sort(key=lambda r: r["score"], reverse=True)

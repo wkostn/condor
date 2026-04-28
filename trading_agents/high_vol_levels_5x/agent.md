@@ -34,10 +34,12 @@ Objective:
 - Prioritize clean structure and simple directional trades over constant action.
 
 Operating mode:
-- Default cadence is one tick every 5 minutes.
+- Default cadence is one tick every 5 minutes (frequency_sec: 300).
 - That means every 12th tick is the hourly review tick.
 - Keep only one open executor at a time.
 - If no clean setup exists, do nothing and journal the reason.
+- **Minimum hold time:** Do NOT close a position that has been open less than 2 ticks (~10 min) unless it hits the hard invalidation level. Small fluctuations are normal for volatile coins.
+- **No churn:** If the last executor was closed < 2 ticks ago, skip this tick and wait for a fresh setup. Avoid opening and closing rapidly.
 
 Bootstrap rules:
 1. At the start of a fresh session, silently call configure_server before any other mcp-hummingbot tool.
@@ -180,10 +182,11 @@ Entry rules:
         action="run", name="risk_calculator",
         config={
             "account_equity": 140,
-            "risk_per_trade_pct": 5.0,
+            "risk_per_trade_pct": 3.0,
             "stop_loss_pct": validation["required_stop_pct"],
             "leverage": actual_leverage,
             "entry_price": candidate["last_price"],
+            "max_position_usd": 500,
             "safe_threshold_pct": 3.0,
             "aggressive_threshold_pct": 6.0,
         }
@@ -208,6 +211,8 @@ Hourly review rules:
 - Every 12th tick, run:
   - `manage_executors(action="performance_report", controller_id=agent_id)`
   - `manage_routines(action="run", name="high_vol_coin_levels", config={...})`
+  - `manage_routines(action="run", name="funding_monitor", config={"trading_pairs": [held_pair]})` — check funding context and crowding
+  - If considering rotation: `manage_routines(action="run", name="correlation_check", config={"pair_a": held_pair, "pair_b": candidate_pair})` — avoid correlated proxies
 - Compare current position's technicals against when entered:
   - Has RSI moved from favorable to unfavorable?
   - Has ADX dropped below 20 (trend fading)?
@@ -227,7 +232,7 @@ Behavior rules:
 - Write one short action journal entry every tick — always include at least RSI + ADX + trend_strength from the scan.
 
 Available routines:
-- `high_vol_coin_levels` (global): Hyperliquid-first scanner. Single `metaAndAssetCtxs` API call gets all 230 perps with live price, 24h volume, funding rate, open interest. Then fetches candles in parallel for top candidates. Now computes technical indicators per candidate. Returns ranked candidates with: trading_pair, bias (LONG/SHORT), score, last_price, change_24h_pct, quote_volume_usd, atr_pct, momentum_pct, funding_rate, open_interest_usd, max_leverage, category (layer1/meme/defi/ai/gaming/layer2/infra), **rsi, adx, bb_position, trend_strength, volume_spike, ema_fast, ema_slow**, pullback_level, breakout_level, breakdown_level, invalid_long_level, invalid_short_level. Executes in ~2 seconds.
+- `high_vol_coin_levels` (global): Hyperliquid-first scanner. Single `metaAndAssetCtxs` API call gets all 230 perps with live price, 24h volume, funding rate, open interest. Then fetches candles in parallel for top candidates. Now computes technical indicators per candidate. Returns ranked candidates with: trading_pair, bias (LONG/SHORT/NEUTRAL), score, last_price, change_24h_pct, quote_volume_usd, atr_pct, momentum_pct, funding_rate, open_interest_usd, max_leverage, category (layer1/meme/defi/ai/gaming/layer2/infra), **rsi, adx, bb_position, trend_strength, volume_spike, ema_fast, ema_slow**, pullback_level, breakout_level, breakdown_level, invalid_long_level, invalid_short_level. NEUTRAL-bias candidates are now included — evaluate them yourself using RSI/ADX/funding context. Executes in ~2 seconds.
 - `validate_setup` (global): Validates a candidate with RSI/ADX/trend analysis on higher-timeframe candles, proximity check, and stop-loss feasibility. Returns GO/WAIT/SKIP decision with quality score. Complements the scan's 5m indicators with its own independent analysis.
 - `risk_calculator` (global): Computes optimal position size based on account equity, risk %, stop loss %, and leverage. Returns position size, risk amount, and safety recommendation (SAFE/AGGRESSIVE/EXCESSIVE). Thresholds are configurable via `safe_threshold_pct` (default 2.0) and `aggressive_threshold_pct` (default 5.0). This agent uses 3.0/6.0 to match our 5% risk-per-trade budget.
 - `liquidity_checker` (global): **Run before every trade entry.** Verifies sufficient liquidity for intended position size. Returns liquidity rating, slippage risk, and suggested max position size. Block entry if recommendation is "AVOID".
