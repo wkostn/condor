@@ -10,6 +10,10 @@ default_config:
   execution_mode: loop
   frequency_sec: 300
   max_ticks: 0
+  model: gpt-5-mini
+  fallback_models:
+    - gpt-4o-mini
+    - gpt-4o
   risk_limits:
     max_drawdown_pct: 25
     max_open_executors: 1

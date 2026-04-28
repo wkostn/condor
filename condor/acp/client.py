@@ -21,9 +21,45 @@ log = logging.getLogger(__name__)
 ACP_COMMANDS: dict[str, str] = {
     "claude-code": "claude-agent-acp",
     "gemini": "gemini --experimental-acp",
-    "copilot": "copilot --acp --model gpt-5-mini --additional-mcp-config @.mcp.json",  # FREE model (0x cost)
+    "copilot": "copilot --acp --model {model} --additional-mcp-config @.mcp.json",  # {model} will be replaced
     "codex": "npx @zed-industries/codex-acp"
 }
+
+# Default models for each agent_key
+DEFAULT_MODELS: dict[str, str] = {
+    "copilot": "gpt-5-mini",  # FREE model (0x cost)
+    "claude-code": "",  # No model override needed
+    "gemini": "",
+    "codex": "",
+}
+
+# Fallback models for each agent_key
+DEFAULT_FALLBACKS: dict[str, list[str]] = {
+    "copilot": ["gpt-4o-mini", "gpt-4o"],  # Fallback to paid models if free fails
+    "claude-code": [],
+    "gemini": [],
+    "codex": [],
+}
+
+
+def build_acp_command(agent_key: str, model: str | None = None) -> str:
+    """Build ACP command with optional model override.
+    
+    Args:
+        agent_key: The agent type (e.g., 'copilot', 'claude-code')
+        model: Optional model to use (e.g., 'gpt-4o'). If None, uses default.
+    
+    Returns:
+        Command string ready to execute
+    """
+    cmd_template = ACP_COMMANDS.get(agent_key, ACP_COMMANDS["claude-code"])
+    
+    # If command has {model} placeholder, replace it
+    if "{model}" in cmd_template:
+        effective_model = model or DEFAULT_MODELS.get(agent_key, "gpt-5-mini")
+        return cmd_template.format(model=effective_model)
+    
+    return cmd_template
 
 
 # --- Event types yielded by prompt_stream ---

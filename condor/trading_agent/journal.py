@@ -823,15 +823,35 @@ class JournalManager:
         return sum(1 for ex in self._parse_executors() if ex.get("status") == "open")
 
     def get_drawdown_pct(self) -> float:
+        """Calculate drawdown as: (peak_pnl - current_pnl) / starting_capital * 100
+        
+        Since we don't have starting_capital readily available, we use the high watermark
+        approach but with a safety threshold: if peak is too small (< $10), we treat
+        drawdown relative to an assumed minimum capital base to avoid absurd percentages.
+        
+        Example problem: peak=$0.05, current=$-0.10 creates (0.05-(-0.10))/0.05 = 300%
+        Solution: Use minimum $100 base for percentage calculations when peak is tiny.
+        """
         snapshots = self._parse_snapshots()
         if not snapshots:
             return 0.0
+        
         pnls = [s.get("pnl", 0) for s in snapshots]
         peak = max(pnls)
         current = pnls[-1]
-        if peak <= 0:
-            return 0.0
-        return max(0, (peak - current) / peak * 100)
+        
+        # Standard high watermark drawdown when peak is meaningful (>= $10)
+        if peak >= 10.0:
+            return max(0, (peak - current) / peak * 100)
+        
+        # When peak is tiny, calculate absolute drawdown from zero
+        # Use $100 as assumed starting capital for % calculation
+        if current < 0:
+            # Loss from zero: e.g. -$0.10 = 0.1% of $100
+            return abs(current) / 100.0 * 100.0
+        
+        # No meaningful drawdown if tiny profit or flat
+        return 0.0
 
     def get_pnl_series(self, hours: int = 24) -> list[dict]:
         return [

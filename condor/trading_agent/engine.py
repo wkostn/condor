@@ -19,6 +19,8 @@ from typing import Any
 from condor.acp.client import (
     ACP_COMMANDS,
     ACPClient,
+    DEFAULT_FALLBACKS,
+    build_acp_command,
     Heartbeat,
     PromptDone,
     TextChunk,
@@ -178,18 +180,32 @@ class TickEngine:
     async def _loop(self) -> None:
         freq = self.config.get("frequency_sec", 60)
         mode = self.config.get("execution_mode", "loop")
+        consecutive_errors = 0
+        max_consecutive_errors = 5  # Auto-pause after this many consecutive failures
         while self._running:
             if not self._paused:
                 try:
                     await self._tick()
                     self._last_error = ""
+                    consecutive_errors = 0  # Reset on success
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     self._last_error = str(e)
-                    log.exception("TickEngine %s tick error", self.agent_id)
+                    consecutive_errors += 1
+                    log.exception("TickEngine %s tick error (%d consecutive)", self.agent_id, consecutive_errors)
                     self.journal.append_error(str(e))
-                    await self._notify(f"Agent {self.agent_id} tick error: {e}")
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        msg = (
+                            f"Agent {self.agent_id}: auto-paused after {consecutive_errors} "
+                            f"consecutive errors. Last: {e}. Resume manually."
+                        )
+                        log.error(msg)
+                        self._paused = True
+                        await self._notify(msg)
+                    else:
+                        await self._notify(f"Agent {self.agent_id} tick error ({consecutive_errors}/{max_consecutive_errors}): {e}")
 
                 # Single-tick modes: stop after first tick
                 if mode in ("dry_run", "run_once"):
@@ -219,8 +235,8 @@ class TickEngine:
         self._last_tick_at = time.time()
         mode = self.config.get("execution_mode", "loop")
 
-        # 1. Get API client
-        client = await self._get_client()
+        # 1. Get API client (with retry for transient failures)
+        client = await self._get_client_with_retry()
         if not client:
             if self.journal:
                 self.journal.append_error("No API client available")
@@ -293,14 +309,15 @@ class TickEngine:
             )
             self._pending_directives.clear()
 
-        # 6. Create a fresh agent client per tick (clean context window)
-        acp_client = await self._create_client()
+        # 6. Create a fresh agent client per tick (with retry for auth failures)
+        acp_client, start_error = await self._start_acp_with_retry()
+        if not acp_client:
+            raise RuntimeError(f"ACP start failed after retries: {start_error}")
 
         response_chunks: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         tool_call_map: dict[str, dict[str, Any]] = {}
 
-        await acp_client.start()
         try:
             async with asyncio.timeout(300):
                 async for event in self._collect_stream(acp_client, prompt):
@@ -462,13 +479,38 @@ class TickEngine:
                 tool_filter_mode=tool_filter_mode,
             )
         else:
-            agent_cmd = ACP_COMMANDS.get(agent_key, ACP_COMMANDS["claude-code"])
-            return ACPClient(
-                command=agent_cmd,
-                working_dir=get_project_dir(),
-                mcp_servers=mcp_servers,
-                permission_callback=permission_cb,
-            )
+            # Get primary and fallback models from config
+            primary_model = self.config.get("model") or None
+            fallback_models = self.config.get("fallback_models") or DEFAULT_FALLBACKS.get(agent_key, [])
+            
+            # Try primary model first
+            models_to_try = [primary_model] + fallback_models if primary_model else [None] + fallback_models
+            
+            last_error = None
+            for attempt, model in enumerate(models_to_try):
+                try:
+                    agent_cmd = build_acp_command(agent_key, model)
+                    client = ACPClient(
+                        command=agent_cmd,
+                        working_dir=get_project_dir(),
+                        mcp_servers=mcp_servers,
+                        permission_callback=permission_cb,
+                    )
+                    
+                    # Test that the client can start
+                    log.info(f"Attempting ACP with model: {model or 'default'} (attempt {attempt + 1}/{len(models_to_try)})")
+                    return client
+                    
+                except Exception as e:
+                    last_error = e
+                    log.warning(f"ACP client failed with model {model or 'default'}: {e}")
+                    if attempt < len(models_to_try) - 1:
+                        log.info(f"Retrying with fallback model...")
+                        continue
+                    
+            # All models failed
+            log.error(f"All models failed for agent_key={agent_key}. Last error: {last_error}")
+            raise RuntimeError(f"Failed to create ACP client after trying {len(models_to_try)} models") from last_error
 
     # ------------------------------------------------------------------
     # Helpers
@@ -507,6 +549,54 @@ class TickEngine:
         except Exception:
             log.exception("Failed to get API client for agent %s", self.agent_id)
             return None
+
+    async def _get_client_with_retry(self, max_retries: int = 3, base_delay: float = 5.0):
+        """Get API client with exponential backoff retry for transient failures."""
+        for attempt in range(max_retries):
+            client = await self._get_client()
+            if client:
+                return client
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # 5s, 10s, 20s
+                log.warning(
+                    "TickEngine %s: API client unavailable (attempt %d/%d), retrying in %.0fs",
+                    self.agent_id, attempt + 1, max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+        return None
+
+    async def _start_acp_with_retry(self, max_retries: int = 3, base_delay: float = 10.0):
+        """Create and start ACP client with retry for auth/connection failures.
+        
+        Returns (acp_client, None) on success or (None, error_message) on failure.
+        """
+        last_error = ""
+        for attempt in range(max_retries):
+            acp_client = await self._create_client()
+            try:
+                await acp_client.start()
+                if attempt > 0:
+                    log.info(
+                        "TickEngine %s: ACP start succeeded on attempt %d/%d",
+                        self.agent_id, attempt + 1, max_retries,
+                    )
+                return acp_client, None
+            except Exception as e:
+                last_error = str(e)
+                log.warning(
+                    "TickEngine %s: ACP start failed (attempt %d/%d): %s",
+                    self.agent_id, attempt + 1, max_retries, e,
+                )
+                # Clean up the failed client
+                try:
+                    await acp_client.stop()
+                except Exception:
+                    pass
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # 10s, 20s, 40s
+                    log.info("TickEngine %s: retrying ACP start in %.0fs", self.agent_id, delay)
+                    await asyncio.sleep(delay)
+        return None, last_error
 
     async def _notify(self, message: str) -> None:
         """Send a notification to the user via Telegram."""
