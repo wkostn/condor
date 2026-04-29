@@ -33,9 +33,10 @@ DEFAULT_MODELS: dict[str, str] = {
     "codex": "",
 }
 
-# Fallback models for each agent_key
+# Fallback models for each agent_key (ordered by preference)
+# Free/included models first, then paid as last resort
 DEFAULT_FALLBACKS: dict[str, list[str]] = {
-    "copilot": ["gpt-4o-mini", "gpt-4o"],  # Fallback to paid models if free fails
+    "copilot": ["gpt-4.1-mini", "gpt-4.1-nano", "o4-mini", "gpt-4o-mini"],
     "claude-code": [],
     "gemini": [],
     "codex": [],

@@ -12,8 +12,10 @@ default_config:
   max_ticks: 0
   model: gpt-5-mini
   fallback_models:
+    - gpt-4.1-mini
+    - gpt-4.1-nano
+    - o4-mini
     - gpt-4o-mini
-    - gpt-4o
   risk_limits:
     max_drawdown_pct: 25
     max_open_executors: 1

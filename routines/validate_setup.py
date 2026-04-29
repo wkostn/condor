@@ -11,6 +11,7 @@ Returns a GO/NO-GO decision with detailed reasoning.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -22,6 +23,43 @@ from routines.base import RoutineResult
 from routines.tech_overlay import compute_technical_indicators, Config as TechConfig
 
 logger = logging.getLogger(__name__)
+
+
+async def _retry_with_backoff(coro, max_retries=3, base_delay=2.0, max_delay=10.0):
+    """Retry an async operation with exponential backoff for rate limits.
+    
+    Args:
+        coro: Coroutine to execute
+        max_retries: Maximum retry attempts
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay in seconds
+    
+    Returns:
+        Result of the coroutine
+    
+    Raises:
+        Exception: If all retries fail
+    """
+    for attempt in range(max_retries):
+        try:
+            return await coro
+        except Exception as e:
+            error_str = str(e).lower()
+            # Check if it's a rate limit or timeout error
+            is_rate_limit = any(x in error_str for x in ['429', '504', 'rate', 'timeout', 'too many'])
+            
+            if not is_rate_limit or attempt == max_retries - 1:
+                raise  # Not a rate limit or last attempt - raise immediately
+            
+            # Calculate exponential backoff with jitter
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            logger.warning(
+                f"Rate limit hit (attempt {attempt + 1}/{max_retries}), "
+                f"retrying in {delay:.1f}s: {e}"
+            )
+            await asyncio.sleep(delay)
+    
+    raise Exception(f"Failed after {max_retries} retries")
 
 
 class Config(BaseModel):
@@ -256,13 +294,17 @@ async def run(config: Config, context: ContextTypes.DEFAULT_TYPE) -> RoutineResu
     if not client:
         return "No server available"
     
-    # Fetch candles
+    # Fetch candles with retry logic for rate limits
     try:
-        result = await client.market_data.get_candles(
-            connector_name=config.connector,
-            trading_pair=config.trading_pair,
-            interval=config.interval,
-            max_records=config.max_records,
+        result = await _retry_with_backoff(
+            client.market_data.get_candles(
+                connector_name=config.connector,
+                trading_pair=config.trading_pair,
+                interval=config.interval,
+                max_records=config.max_records,
+            ),
+            max_retries=3,
+            base_delay=2.0,
         )
         
         if isinstance(result, list):
@@ -273,8 +315,8 @@ async def run(config: Config, context: ContextTypes.DEFAULT_TYPE) -> RoutineResu
             return f"Invalid candle data for {config.trading_pair}"
             
     except Exception as e:
-        logger.error("Failed to fetch candles: %s", e)
-        return f"Candle fetch failed: {e}"
+        logger.error("Failed to fetch candles after retries: %s", e)
+        return f"Candle fetch failed (rate limited?): {e}"
     
     if not candles or len(candles) < 50:
         return f"Insufficient candle data ({len(candles) if candles else 0} candles)"
