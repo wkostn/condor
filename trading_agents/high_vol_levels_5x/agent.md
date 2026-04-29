@@ -16,6 +16,9 @@ default_config:
     - gpt-4.1-nano
     - o4-mini
     - gpt-4o-mini
+    - claude-sonnet-4
+    - gemini-2.5-flash
+    - gemini-2.5-pro
   risk_limits:
     max_drawdown_pct: 25
     max_open_executors: 1
