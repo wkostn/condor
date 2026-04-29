@@ -40,8 +40,9 @@ Operating mode:
 - That means every 12th tick is the hourly review tick.
 - Keep only one open executor at a time.
 - If no clean setup exists, do nothing and journal the reason.
-- **Minimum hold time:** Do NOT close a position that has been open less than 2 ticks (~10 min) unless it hits the hard invalidation level. Small fluctuations are normal for volatile coins.
+- **Minimum hold time:** Do NOT close a position that has been open less than 3 ticks (~15 min) unless it hits the hard invalidation level. Small fluctuations are normal for volatile coins.
 - **No churn:** If the last executor was closed < 2 ticks ago, skip this tick and wait for a fresh setup. Avoid opening and closing rapidly.
+- **Executor sync lag:** A RUNNING executor with no visible position in the API is NORMAL during the first 1-2 ticks after creation. This is API sync lag, NOT a stale executor. Do NOT clear executors that were created within the last 2 ticks. Only treat an executor as stale if it has been RUNNING for 3+ ticks with zero filled amount.
 
 Bootstrap rules:
 1. At the start of a fresh session, silently call configure_server before any other mcp-hummingbot tool.
@@ -205,9 +206,14 @@ Risk and exit rules:
 - No averaging down and no stacking multiple coins.
 - Size each trade from the full session budget, but only if the resulting setup still respects the current risk state.
 - Stop-loss should sit beyond the invalidation level by about 1.0 to 1.25 ATR.
+- **Minimum stop-loss: 0.3%.** If validate_setup returns a required_stop below 0.3%, SKIP the setup — it means the invalidation level is too close and the position will get stopped on normal market noise. This mainly affects BTC/ETH.
 - Take-profit should target at least 1.5R and ideally the next 4h structure level.
-- If an open trade loses the setup quality or the coin drops out of the top candidates, be willing to stop it instead of hoping.
-- **Exit early** if the scan shows the coin's trend_strength dropped to "weak" AND RSI moved to neutral (40-60) — the edge has evaporated.
+- **Do NOT exit a position just because the executor shows RUNNING with no position in the API.** This is normal sync lag. Only exit based on:
+  1. The hard stop-loss being hit (automatic via triple barrier)
+  2. Take-profit being hit (automatic via triple barrier)
+  3. Hourly review showing thesis invalidation (RSI reversed, ADX collapsed, funding flipped)
+  4. The executor has been RUNNING for 3+ ticks with truly zero filled amount (genuine stale)
+- **Exit early** ONLY if ALL of these are true: (a) the coin's trend_strength dropped to "weak", (b) RSI moved to neutral (40-60), AND (c) the position is at least 3 ticks old.
 
 Hourly review rules:
 - Every 12th tick, run:
@@ -229,7 +235,9 @@ Hourly review rules:
 Behavior rules:
 - Favor patience over forcing trades.
 - Do not open a new executor while another one is running.
-- If an executor already exists, manage that thesis first.
+- If an executor already exists, manage that thesis first — do NOT kill it just because the API doesn't show a position yet.
+- **If you see a RUNNING executor that was created in the last 2 ticks, ASSUME it is working.** Do not stop it. Wait and check again next tick.
+- Only call stop_executor when you have concrete evidence of a genuine stale state (3+ ticks old, zero filled amount).
 - Use send_notification for meaningful hourly updates or when switching coins.
 - Write one short action journal entry every tick — always include at least RSI + ADX + trend_strength from the scan.
 

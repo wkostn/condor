@@ -86,7 +86,8 @@ class Config(BaseModel):
     
     # Thresholds
     proximity_pct: float = Field(default=1.5, description="Max % from level to consider 'near'")
-    max_stop_pct: float = Field(default=4.5, description="Max acceptable stop % (for risk budget)")
+    max_stop_pct: float = Field(default=6.0, description="Max acceptable stop % (for risk budget)")
+    min_stop_pct: float = Field(default=0.3, description="Min acceptable stop % (below this = noise, not structure)")
     min_quality_score: float = Field(default=60, description="Min quality score to consider entry")
     
     # RSI thresholds
@@ -156,7 +157,11 @@ def _validate_setup(config: Config, tech: Any) -> dict[str, Any]:
     is_near_level = dist_to_entry <= config.proximity_pct
     
     # 3. Check stop feasibility
-    stop_acceptable = required_stop_pct <= config.max_stop_pct
+    #    Stop must be between min_stop_pct and max_stop_pct.
+    #    Below min = noise/random fluctuation, not real structure.
+    stop_too_tight = required_stop_pct < config.min_stop_pct
+    stop_too_wide = required_stop_pct > config.max_stop_pct
+    stop_acceptable = not stop_too_tight and not stop_too_wide
     
     # 4. Technical confirmation
     rsi = tech.rsi_4h
@@ -213,12 +218,15 @@ def _validate_setup(config: Config, tech: Any) -> dict[str, Any]:
         score += 3  # Neither aligned nor strong
     
     # Stop distance (0-15 points)
-    if required_stop_pct <= 2.5:
-        score += 15  # Very tight
-    elif required_stop_pct <= 3.5:
-        score += 12  # Good
+    # Stops that are too tight (<0.3%) are noise, not structure — penalize them.
+    if required_stop_pct < config.min_stop_pct:
+        score += 0  # Too tight = will get stopped on noise
+    elif required_stop_pct <= 1.5:
+        score += 12  # Tight but structural
+    elif required_stop_pct <= 3.0:
+        score += 15  # Ideal: room to breathe
     elif required_stop_pct <= 4.5:
-        score += 8  # Acceptable
+        score += 10  # Acceptable
     else:
         score += 3  # Wide
     
@@ -233,7 +241,12 @@ def _validate_setup(config: Config, tech: Any) -> dict[str, Any]:
         score += 1
     
     # 6. Decision logic
-    if not stop_acceptable:
+    if stop_too_tight:
+        decision = "SKIP"
+        reason = f"Stop too tight: {required_stop_pct:.2f}% < {config.min_stop_pct}% min (noise, not structure)"
+        ready = False
+        
+    elif stop_too_wide:
         decision = "SKIP"
         reason = f"Stop too wide: {required_stop_pct:.2f}% > {config.max_stop_pct}% limit"
         ready = False
@@ -283,6 +296,7 @@ def _validate_setup(config: Config, tech: Any) -> dict[str, Any]:
         # Risk metrics
         "required_stop_pct": round(required_stop_pct, 2),
         "stop_acceptable": stop_acceptable,
+        "stop_too_tight": stop_too_tight,
         "stop_level": round(stop_level, 6),
     }
 
