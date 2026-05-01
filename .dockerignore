@@ -11,8 +11,9 @@ node_modules/
 data/
 logs/
 build/
-dist/
 *.egg-info/
 .pytest_cache/
 .mypy_cache/
 servers.yml
+# Allow frontend/dist to be included in Docker image
+!frontend/dist

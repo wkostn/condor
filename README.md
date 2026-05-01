@@ -158,7 +158,15 @@ Preferences are automatically saved and persist across sessions:
 TELEGRAM_TOKEN=your_bot_token
 ADMIN_USER_ID=123456789
 OPENAI_API_KEY=sk-...  # Optional, for AI features
+OPENROUTER_API_KEY=<YOUR_KEY>  # Required for OpenRouter LLM models (e.g. openrouter:openai/gpt-5.2)
 ```
+
+> **OpenRouter Setup:** To use OpenRouter-hosted models, add your API key as
+> `OPENROUTER_API_KEY=<YOUR_KEY>` in `.env`. Get a key at
+> [openrouter.ai/keys](https://openrouter.ai/keys). You can then select
+> OpenRouter models (GPT-5.2, Claude Sonnet 4, Llama 3.3 70B, etc.) from the
+> LLM picker in the bot. Optionally set `OPENROUTER_SITE_URL` and
+> `OPENROUTER_SITE_TITLE` for attribution on the OpenRouter leaderboards.
 
 ### `config.yml` (auto-created on first run)
 ```yaml

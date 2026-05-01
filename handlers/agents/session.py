@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from telegram import Bot
 
-from condor.acp import ACP_COMMANDS, ACPClient, PermissionCallback, PromptDone
+from condor.acp import ACPClient, build_acp_command, PermissionCallback, PromptDone
 from condor.acp.pydantic_ai_client import PydanticAIClient, is_pydantic_ai_model
 from handlers.agents._shared import (
     build_initial_context,
@@ -35,7 +35,7 @@ _health_bot: Bot | None = None
 @dataclass
 class AgentSession:
     chat_id: int
-    agent_key: str  # "claude-code", "gemini", "codex", "copilot", "ollama:model", "lmstudio:model", etc.
+    agent_key: str  # "claude-code", "gemini", "codex", "copilot", "ollama:model", "lmstudio:model", "openrouter:provider/model", etc.
     client: ACPClient | PydanticAIClient
     mode: str = "condor"  # "condor", "agent_builder"
     is_busy: bool = False
@@ -96,11 +96,29 @@ async def get_or_create_session(
 
     # Reuse existing session if same agent and still alive
     if session and session.agent_key == agent_key and session.client.alive:
+        log.info(
+            "[llm-switch] get_or_create: REUSE chat_id=%s agent_key=%r",
+            chat_id,
+            agent_key,
+        )
         return session
 
     # Destroy old session if exists
     if session:
+        log.info(
+            "[llm-switch] get_or_create: DESTROY chat_id=%s old_key=%r new_key=%r alive=%s",
+            chat_id,
+            session.agent_key,
+            agent_key,
+            session.client.alive,
+        )
         await _destroy_session_internal(chat_id)
+    else:
+        log.info(
+            "[llm-switch] get_or_create: CREATE_FRESH chat_id=%s agent_key=%r",
+            chat_id,
+            agent_key,
+        )
 
     extra_env = {
         "CONDOR_CHAT_ID": str(chat_id),
@@ -135,8 +153,8 @@ async def get_or_create_session(
             tool_filter_mode=tool_filter_mode,  # Auto-detects if None
         )
     else:
-        # For ACP subprocess models: claude-code, gemini, codex
-        command = ACP_COMMANDS.get(agent_key, ACP_COMMANDS["claude-code"])
+        # For ACP subprocess models: claude-code, gemini, codex, copilot
+        command = build_acp_command(agent_key)
         client = ACPClient(
             command=command,
             working_dir=get_project_dir(),
@@ -163,7 +181,13 @@ async def get_or_create_session(
         mode=mode,
     )
     _sessions[chat_id] = session
-    log.info("Created agent session for chat %d: %s", chat_id, agent_key)
+    log.info(
+        "[llm-switch] get_or_create: CREATED chat_id=%s agent_key=%r client=%s mode=%r",
+        chat_id,
+        agent_key,
+        type(client).__name__,
+        mode,
+    )
     return session
 
 

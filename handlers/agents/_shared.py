@@ -7,12 +7,18 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 AGENT_OPTIONS: dict[str, dict[str, str]] = {
+    "copilot": {"label": "GitHub Copilot CLI"},
     "claude-code": {"label": "Claude Code"},
     "gemini": {"label": "Gemini CLI"},
-    "copilot": {"label": "GitHub Copilot CLI"},
     "codex": {"label": "ChatGPT Codex"},
     "ollama:": {"label": "Ollama — Default Model"},
     "lmstudio:": {"label": "LM Studio — Default Model"},
+    "openrouter:openai/gpt-5.2": {"label": "OpenRouter — GPT-5.2"},
+    "openrouter:anthropic/claude-sonnet-4": {"label": "OpenRouter — Claude Sonnet 4"},
+    "openrouter:meta-llama/llama-3.3-70b-instruct": {"label": "OpenRouter — Llama 3.3 70B"},
+    "openrouter:minimax/minimax-m2.7": {"label": "OpenRouter — MiniMax M2.7"},
+    "openrouter:moonshotai/kimi-k2.6": {"label": "OpenRouter — Kimi K2.6"},
+    "openrouter:deepseek/deepseek-v4-pro": {"label": "OpenRouter — DeepSeek V4 Pro"},
 }
 
 DEFAULT_AGENT = "claude-code"
@@ -124,12 +130,14 @@ Available models:
 - Pydantic AI (local): "ollama:llama3.1", "ollama:qwen3:32b", \
 "ollama:qwen2.5:72b", "ollama:deepseek-r1:32b", "lmstudio:<model-name>"
 - Pydantic AI (cloud): "openai:gpt-4o", "groq:llama-3.3-70b-versatile"
+- OpenRouter (cloud, unified gateway): "openrouter:openai/gpt-5.2", \
+"openrouter:anthropic/claude-sonnet-4", \
+"openrouter:meta-llama/llama-3.3-70b-instruct". Requires OPENROUTER_API_KEY \
+in .env. Honors model_base_url for self-hosted proxies.
 - Custom endpoint: use "openai:<model-name>" + model_base_url in config
-
-Default URLs (no config needed): Ollama=localhost:11434, LM Studio=localhost:1234. \
-Override with model_base_url in config if running on a different host/port.
-
-GENERIC vs SPECIFIC STRATEGIES:
+  
+Default URLs (no config needed): Ollama=localhost:11434, LM Studio=localhost:1234, \
+OpenRouter=https://openrouter.ai/api/v1. \
 - GENERIC: trading_pair and connector are NOT in the instructions. Passed at \
 launch via `trading_context`. Refer to "the configured trading pair". Default.
 - SPECIFIC: pair/connector baked into instructions (e.g. ETH/BTC ratio strategy).

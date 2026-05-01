@@ -265,7 +265,13 @@ def register_handlers(application: Application) -> None:
     # Import fresh versions after reload
     from handlers.admin import admin_command
     from handlers.admin.update import update_command
-    from handlers.agents import agent_callback_handler, agent_command, agent_voice_handler
+    from handlers.agents import (
+        agent_callback_handler,
+        agent_command,
+        agent_document_handler,
+        agent_photo_handler,
+        agent_voice_handler,
+    )
     from handlers.bots import (
         bots_callback_handler,
         bots_command,
@@ -360,6 +366,10 @@ def register_handlers(application: Application) -> None:
 
     # Add voice message handler for agent transcription
     application.add_handler(MessageHandler(filters.VOICE, agent_voice_handler))
+
+    # Add photo and document handlers for agent (multimodal support)
+    application.add_handler(MessageHandler(filters.PHOTO, agent_photo_handler))
+    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, agent_document_handler))
 
     # Add document handler for file uploads (e.g., config files in /bots)
     application.add_handler(get_bots_document_handler())

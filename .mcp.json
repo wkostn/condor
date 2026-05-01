@@ -1,0 +1,32 @@
+{
+  "mcpServers": {
+    "mcp-hummingbot": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "mcp_servers.hummingbot_api",
+        "--url",
+        "http://hummingbot-api:8000",
+        "--username",
+        "admin",
+        "--password",
+        "admin"
+      ]
+    },
+    "condor": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "-m",
+        "mcp_servers.condor",
+        "--chat-id",
+        "0",
+        "--user-id",
+        "961686906"
+      ]
+    }
+  }
+}

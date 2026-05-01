@@ -21,9 +21,46 @@ log = logging.getLogger(__name__)
 ACP_COMMANDS: dict[str, str] = {
     "claude-code": "claude-agent-acp",
     "gemini": "gemini --experimental-acp",
-    "copilot": "copilot --acp",
-    "codex": "npx @zed-industries/codex-acp"
+    "copilot": "copilot --acp --model {model} --additional-mcp-config @.mcp.json",  # {model} will be replaced
+    "codex": "npx @zed-industries/codex-acp",
 }
+
+# Default models for each agent_key
+DEFAULT_MODELS: dict[str, str] = {
+    "copilot": "gpt-5-mini",  # FREE model (0x cost)
+    "claude-code": "",  # No model override needed
+    "gemini": "",
+    "codex": "",
+}
+
+# Fallback models for each agent_key (ordered by preference)
+# Free/included models first, then paid as last resort
+DEFAULT_FALLBACKS: dict[str, list[str]] = {
+    "copilot": ["gpt-4.1-mini", "gpt-4.1-nano", "o4-mini", "gpt-4o-mini"],
+    "claude-code": [],
+    "gemini": [],
+    "codex": [],
+}
+
+
+def build_acp_command(agent_key: str, model: str | None = None) -> str:
+    """Build ACP command with optional model override.
+    
+    Args:
+        agent_key: The agent type (e.g., 'copilot', 'claude-code')
+        model: Optional model to use (e.g., 'gpt-4o'). If None, uses default.
+    
+    Returns:
+        Command string ready to execute
+    """
+    cmd_template = ACP_COMMANDS.get(agent_key, ACP_COMMANDS["claude-code"])
+    
+    # If command has {model} placeholder, replace it
+    if "{model}" in cmd_template:
+        effective_model = model or DEFAULT_MODELS.get(agent_key, "gpt-5-mini")
+        return cmd_template.format(model=effective_model)
+    
+    return cmd_template
 
 
 # --- Event types yielded by prompt_stream ---
@@ -127,6 +164,7 @@ class ACPClient:
             },
             self._process.stdin,
         )
+        log.info("ACP session/new params: cwd=%s, mcp_servers=%s", self.working_dir, self.mcp_servers)
         result = await self._peer.send_request(
             "session/new",
             {"cwd": self.working_dir, "mcpServers": self.mcp_servers},
@@ -202,7 +240,11 @@ class ACPClient:
                     break
                 text = line.decode(errors="replace").rstrip()
                 if text:
-                    log.debug("ACP stderr: %s", text)
+                    # Log MCP server errors at WARNING level for visibility
+                    if "error" in text.lower() or "exception" in text.lower() or "failed" in text.lower():
+                        log.warning("ACP stderr: %s", text)
+                    else:
+                        log.info("ACP stderr: %s", text)
         except asyncio.CancelledError:
             return
         except Exception:
@@ -241,7 +283,7 @@ class ACPClient:
         self._process.stdin.write((json.dumps(msg) + "\n").encode())
         await self._process.stdin.drain()
 
-        future: asyncio.Future[Any] = asyncio.get_event_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
         self._peer._pending[req_id] = future
 
         def _on_response(fut: asyncio.Future) -> None:
@@ -251,6 +293,10 @@ class ACPClient:
                 self._event_queue.put_nowait(PromptDone(stop_reason="error"))
             else:
                 result = fut.result()
+                # If the result is just an ack (e.g. {"ok": true}), don't emit PromptDone.
+                # The done signal will come from session/update with delta.type="done".
+                if isinstance(result, dict) and result.get("ok") and "stopReason" not in result:
+                    return  # Ack only -- wait for session/update done event
                 reason = (
                     result.get("stopReason", "end_turn")
                     if isinstance(result, dict)
@@ -260,9 +306,76 @@ class ACPClient:
 
         future.add_done_callback(_on_response)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         start_time = loop.time()
         max_duration = 1860  # 31 min hard ceiling (slightly above session-level timeout)
+
+        while True:
+            try:
+                event = await asyncio.wait_for(self._event_queue.get(), timeout=30)
+            except asyncio.TimeoutError:
+                elapsed = loop.time() - start_time
+                if not self.alive:
+                    yield PromptDone(stop_reason="disconnected")
+                    break
+                if elapsed > max_duration:
+                    log.warning("Prompt hard timeout after %.0fs", elapsed)
+                    yield PromptDone(stop_reason="timeout")
+                    break
+                yield Heartbeat(elapsed_seconds=elapsed)
+                continue
+            if event is None:
+                break
+            yield event
+            if isinstance(event, PromptDone):
+                break
+
+    async def prompt_stream_multimodal(self, content: list[dict]) -> AsyncIterator[ACPEvent]:
+        """Send a multimodal prompt (text, images, files) and yield ACP events."""
+        assert self._process and self._session_id
+
+        # Clear the event queue
+        while not self._event_queue.empty():
+            self._event_queue.get_nowait()
+
+        req_id = self._peer._next_id
+        self._peer._next_id += 1
+        msg = {
+            "jsonrpc": "2.0",
+            "method": "session/prompt",
+            "params": {
+                "sessionId": self._session_id,
+                "prompt": content,  # List of {type, text/data/...} objects
+            },
+            "id": req_id,
+        }
+        self._process.stdin.write((json.dumps(msg) + "\n").encode())
+        await self._process.stdin.drain()
+
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._peer._pending[req_id] = future
+
+        def _on_response(fut: asyncio.Future) -> None:
+            if fut.cancelled():
+                self._event_queue.put_nowait(PromptDone(stop_reason="cancelled"))
+            elif fut.exception():
+                self._event_queue.put_nowait(PromptDone(stop_reason="error"))
+            else:
+                result = fut.result()
+                if isinstance(result, dict) and result.get("ok") and "stopReason" not in result:
+                    return  # Ack only -- wait for session/update done event
+                reason = (
+                    result.get("stopReason", "end_turn")
+                    if isinstance(result, dict)
+                    else "end_turn"
+                )
+                self._event_queue.put_nowait(PromptDone(stop_reason=reason))
+
+        future.add_done_callback(_on_response)
+
+        loop = asyncio.get_running_loop()
+        start_time = loop.time()
+        max_duration = 1860
 
         while True:
             try:
@@ -287,37 +400,77 @@ class ACPClient:
     # --- Reverse-RPC handlers ---
 
     def _on_session_update(
-        self, sessionId: str, update: dict[str, Any], _meta: dict | None = None, **kw: Any
+        self, sessionId: str, update: dict[str, Any] | None = None,
+        delta: dict[str, Any] | None = None,
+        _meta: dict | None = None, **kw: Any
     ) -> None:
-        kind = update.get("sessionUpdate")
-        if kind == "agent_message_chunk":
-            content = update.get("content", {})
-            text = content.get("text", "")
-            if text:
-                self._event_queue.put_nowait(TextChunk(text=text))
-        elif kind == "agent_thought_chunk":
-            content = update.get("content", {})
-            text = content.get("text", "")
-            if text:
-                self._event_queue.put_nowait(ThoughtChunk(text=text))
-        elif kind == "tool_call":
-            self._event_queue.put_nowait(
-                ToolCallEvent(
-                    tool_call_id=update.get("toolCallId", ""),
-                    title=update.get("title", ""),
-                    status=update.get("status", "pending"),
-                    kind=update.get("kind", "other"),
-                    input=update.get("input"),
+        # Support both native ACP format (update.sessionUpdate) and
+        # delta-based format (delta.type)
+        if delta is not None:
+            kind = delta.get("type")
+            if kind == "text":
+                text = delta.get("text", "")
+                if text:
+                    self._event_queue.put_nowait(TextChunk(text=text))
+            elif kind == "thought":
+                text = delta.get("text", "")
+                if text:
+                    self._event_queue.put_nowait(ThoughtChunk(text=text))
+            elif kind == "tool_call":
+                self._event_queue.put_nowait(
+                    ToolCallEvent(
+                        tool_call_id=delta.get("toolCallId", ""),
+                        title=delta.get("title", ""),
+                        status=delta.get("status", "pending"),
+                        kind=delta.get("kind", "other"),
+                        input=delta.get("input"),
+                    )
                 )
-            )
-        elif kind == "tool_call_update":
-            self._event_queue.put_nowait(
-                ToolCallUpdate(
-                    tool_call_id=update.get("toolCallId", ""),
-                    status=update.get("status"),
-                    title=update.get("title"),
+            elif kind == "tool_call_update":
+                self._event_queue.put_nowait(
+                    ToolCallUpdate(
+                        tool_call_id=delta.get("toolCallId", ""),
+                        status=delta.get("status"),
+                        title=delta.get("title"),
+                    )
                 )
-            )
+            elif kind == "done":
+                reason = delta.get("stopReason", "end_turn")
+                self._event_queue.put_nowait(PromptDone(stop_reason=reason))
+            elif kind == "error":
+                log.error("ACP error: %s", delta.get("error", "unknown"))
+                self._event_queue.put_nowait(PromptDone(stop_reason="error"))
+        elif update is not None:
+            # Native ACP format (claude-code, copilot, gemini, codex)
+            kind = update.get("sessionUpdate")
+            if kind == "agent_message_chunk":
+                content = update.get("content", {})
+                text = content.get("text", "")
+                if text:
+                    self._event_queue.put_nowait(TextChunk(text=text))
+            elif kind == "agent_thought_chunk":
+                content = update.get("content", {})
+                text = content.get("text", "")
+                if text:
+                    self._event_queue.put_nowait(ThoughtChunk(text=text))
+            elif kind == "tool_call":
+                self._event_queue.put_nowait(
+                    ToolCallEvent(
+                        tool_call_id=update.get("toolCallId", ""),
+                        title=update.get("title", ""),
+                        status=update.get("status", "pending"),
+                        kind=update.get("kind", "other"),
+                        input=update.get("input"),
+                    )
+                )
+            elif kind == "tool_call_update":
+                self._event_queue.put_nowait(
+                    ToolCallUpdate(
+                        tool_call_id=update.get("toolCallId", ""),
+                        status=update.get("status"),
+                        title=update.get("title"),
+                    )
+                )
 
     async def _on_request_permission(
         self,

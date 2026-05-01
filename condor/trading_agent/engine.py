@@ -19,6 +19,8 @@ from typing import Any
 from condor.acp.client import (
     ACP_COMMANDS,
     ACPClient,
+    DEFAULT_FALLBACKS,
+    build_acp_command,
     Heartbeat,
     PromptDone,
     TextChunk,
@@ -28,6 +30,11 @@ from condor.acp.client import (
 from condor.acp.pydantic_ai_client import PydanticAIClient, is_pydantic_ai_model
 
 from .journal import JournalManager, next_experiment_number, next_session_number
+
+
+class _QuotaError(Exception):
+    """Raised when ACP response indicates a model quota/billing error."""
+    pass
 from .prompts import build_tick_prompt
 from .risk import RiskEngine, RiskLimits, auto_approve_with_risk_check
 from .strategy import Strategy
@@ -178,18 +185,32 @@ class TickEngine:
     async def _loop(self) -> None:
         freq = self.config.get("frequency_sec", 60)
         mode = self.config.get("execution_mode", "loop")
+        consecutive_errors = 0
+        max_consecutive_errors = 5  # Auto-pause after this many consecutive failures
         while self._running:
             if not self._paused:
                 try:
                     await self._tick()
                     self._last_error = ""
+                    consecutive_errors = 0  # Reset on success
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
                     self._last_error = str(e)
-                    log.exception("TickEngine %s tick error", self.agent_id)
+                    consecutive_errors += 1
+                    log.exception("TickEngine %s tick error (%d consecutive)", self.agent_id, consecutive_errors)
                     self.journal.append_error(str(e))
-                    await self._notify(f"Agent {self.agent_id} tick error: {e}")
+
+                    if consecutive_errors >= max_consecutive_errors:
+                        msg = (
+                            f"Agent {self.agent_id}: auto-paused after {consecutive_errors} "
+                            f"consecutive errors. Last: {e}. Resume manually."
+                        )
+                        log.error(msg)
+                        self._paused = True
+                        await self._notify(msg)
+                    else:
+                        await self._notify(f"Agent {self.agent_id} tick error ({consecutive_errors}/{max_consecutive_errors}): {e}")
 
                 # Single-tick modes: stop after first tick
                 if mode in ("dry_run", "run_once"):
@@ -219,8 +240,8 @@ class TickEngine:
         self._last_tick_at = time.time()
         mode = self.config.get("execution_mode", "loop")
 
-        # 1. Get API client
-        client = await self._get_client()
+        # 1. Get API client (with retry for transient failures)
+        client = await self._get_client_with_retry()
         if not client:
             if self.journal:
                 self.journal.append_error("No API client available")
@@ -293,50 +314,8 @@ class TickEngine:
             )
             self._pending_directives.clear()
 
-        # 6. Create a fresh agent client per tick (clean context window)
-        acp_client = await self._create_client()
-
-        response_chunks: list[str] = []
-        tool_calls: list[dict[str, Any]] = []
-        tool_call_map: dict[str, dict[str, Any]] = {}
-
-        await acp_client.start()
-        try:
-            async with asyncio.timeout(300):
-                async for event in self._collect_stream(acp_client, prompt):
-                    if isinstance(event, TextChunk):
-                        response_chunks.append(event.text)
-                    elif isinstance(event, ToolCallEvent):
-                        if event.tool_call_id in tool_call_map:
-                            tc = tool_call_map[event.tool_call_id]
-                            tc["status"] = event.status
-                            if event.title:
-                                tc["name"] = event.title
-                            if event.input:
-                                tc["input"] = event.input
-                        else:
-                            tc = {
-                                "id": event.tool_call_id,
-                                "name": event.title,
-                                "status": event.status,
-                                "kind": event.kind,
-                            }
-                            if event.input:
-                                tc["input"] = event.input
-                            tool_calls.append(tc)
-                            tool_call_map[event.tool_call_id] = tc
-                    elif isinstance(event, ToolCallUpdate):
-                        if event.tool_call_id in tool_call_map:
-                            tc = tool_call_map[event.tool_call_id]
-                            if event.status:
-                                tc["status"] = event.status
-                            if event.title:
-                                tc["name"] = event.title
-        except asyncio.TimeoutError:
-            log.warning("TickEngine %s: ACP prompt timed out", self.agent_id)
-            response_chunks.append("(timed out)")
-        finally:
-            await acp_client.stop()
+        # 6. Run ACP tick with model fallback on quota/auth errors
+        response_chunks, tool_calls, tool_call_map = await self._run_acp_tick_with_fallback(prompt)
 
         response_text = "".join(response_chunks)
         tick_duration = time.time() - self._last_tick_at
@@ -462,13 +441,38 @@ class TickEngine:
                 tool_filter_mode=tool_filter_mode,
             )
         else:
-            agent_cmd = ACP_COMMANDS.get(agent_key, ACP_COMMANDS["claude-code"])
-            return ACPClient(
-                command=agent_cmd,
-                working_dir=get_project_dir(),
-                mcp_servers=mcp_servers,
-                permission_callback=permission_cb,
-            )
+            # Get primary and fallback models from config
+            primary_model = self.config.get("model") or None
+            fallback_models = self.config.get("fallback_models") or DEFAULT_FALLBACKS.get(agent_key, [])
+            
+            # Try primary model first
+            models_to_try = [primary_model] + fallback_models if primary_model else [None] + fallback_models
+            
+            last_error = None
+            for attempt, model in enumerate(models_to_try):
+                try:
+                    agent_cmd = build_acp_command(agent_key, model)
+                    client = ACPClient(
+                        command=agent_cmd,
+                        working_dir=get_project_dir(),
+                        mcp_servers=mcp_servers,
+                        permission_callback=permission_cb,
+                    )
+                    
+                    # Test that the client can start
+                    log.info(f"Attempting ACP with model: {model or 'default'} (attempt {attempt + 1}/{len(models_to_try)})")
+                    return client
+                    
+                except Exception as e:
+                    last_error = e
+                    log.warning(f"ACP client failed with model {model or 'default'}: {e}")
+                    if attempt < len(models_to_try) - 1:
+                        log.info(f"Retrying with fallback model...")
+                        continue
+                    
+            # All models failed
+            log.error(f"All models failed for agent_key={agent_key}. Last error: {last_error}")
+            raise RuntimeError(f"Failed to create ACP client after trying {len(models_to_try)} models") from last_error
 
     # ------------------------------------------------------------------
     # Helpers
@@ -507,6 +511,169 @@ class TickEngine:
         except Exception:
             log.exception("Failed to get API client for agent %s", self.agent_id)
             return None
+
+    async def _get_client_with_retry(self, max_retries: int = 3, base_delay: float = 5.0):
+        """Get API client with exponential backoff retry for transient failures."""
+        for attempt in range(max_retries):
+            client = await self._get_client()
+            if client:
+                return client
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # 5s, 10s, 20s
+                log.warning(
+                    "TickEngine %s: API client unavailable (attempt %d/%d), retrying in %.0fs",
+                    self.agent_id, attempt + 1, max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+        return None
+
+    async def _start_acp_with_retry(self, max_retries: int = 3, base_delay: float = 10.0):
+        """Create and start ACP client with retry for auth/connection failures.
+        
+        Returns (acp_client, None) on success or (None, error_message) on failure.
+        """
+        last_error = ""
+        for attempt in range(max_retries):
+            acp_client = await self._create_client()
+            try:
+                await acp_client.start()
+                if attempt > 0:
+                    log.info(
+                        "TickEngine %s: ACP start succeeded on attempt %d/%d",
+                        self.agent_id, attempt + 1, max_retries,
+                    )
+                return acp_client, None
+            except Exception as e:
+                last_error = str(e)
+                log.warning(
+                    "TickEngine %s: ACP start failed (attempt %d/%d): %s",
+                    self.agent_id, attempt + 1, max_retries, e,
+                )
+                # Clean up the failed client
+                try:
+                    await acp_client.stop()
+                except Exception:
+                    pass
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # 10s, 20s, 40s
+                    log.info("TickEngine %s: retrying ACP start in %.0fs", self.agent_id, delay)
+                    await asyncio.sleep(delay)
+        return None, last_error
+
+    # Patterns that indicate a quota/billing error in ACP response text
+    _QUOTA_ERROR_PATTERNS = ("402", "no quota", "rate limit", "quota exceeded", "billing")
+
+    async def _run_acp_tick_with_fallback(
+        self, prompt: str
+    ) -> tuple[list[str], list[dict[str, Any]], dict[str, dict[str, Any]]]:
+        """Run ACP prompt with model fallback on quota/auth errors.
+
+        If the primary model returns a quota error (402), retries with each
+        fallback model before giving up.  Returns (response_chunks, tool_calls,
+        tool_call_map).
+        """
+        agent_key = self.config.get("agent_key") or self.strategy.agent_key
+        primary_model = self.config.get("model") or None
+        fallback_models = self.config.get("fallback_models") or DEFAULT_FALLBACKS.get(agent_key, [])
+        models_to_try = [primary_model] + [m for m in fallback_models if m != primary_model]
+
+        for model_idx, model in enumerate(models_to_try):
+            # Override model for this attempt
+            saved_model = self.config.get("model")
+            self.config["model"] = model
+
+            try:
+                acp_client, start_error = await self._start_acp_with_retry(max_retries=1)
+                if not acp_client:
+                    log.warning(
+                        "TickEngine %s: ACP start failed with model %s: %s",
+                        self.agent_id, model or "default", start_error,
+                    )
+                    continue
+
+                response_chunks: list[str] = []
+                tool_calls: list[dict[str, Any]] = []
+                tool_call_map: dict[str, dict[str, Any]] = {}
+
+                try:
+                    async with asyncio.timeout(300):
+                        async for event in self._collect_stream(acp_client, prompt):
+                            if isinstance(event, TextChunk):
+                                response_chunks.append(event.text)
+                                # Early detection: check for quota errors in first chunks
+                                if len(response_chunks) <= 3:
+                                    early_text = "".join(response_chunks).lower()
+                                    if any(p in early_text for p in self._QUOTA_ERROR_PATTERNS):
+                                        log.warning(
+                                            "TickEngine %s: quota error detected with model %s: %s",
+                                            self.agent_id, model or "default",
+                                            "".join(response_chunks)[:200],
+                                        )
+                                        raise _QuotaError("".join(response_chunks)[:200])
+                            elif isinstance(event, ToolCallEvent):
+                                if event.tool_call_id in tool_call_map:
+                                    tc = tool_call_map[event.tool_call_id]
+                                    tc["status"] = event.status
+                                    if event.title:
+                                        tc["name"] = event.title
+                                    if event.input:
+                                        tc["input"] = event.input
+                                else:
+                                    tc = {
+                                        "id": event.tool_call_id,
+                                        "name": event.title,
+                                        "status": event.status,
+                                        "kind": event.kind,
+                                    }
+                                    if event.input:
+                                        tc["input"] = event.input
+                                    tool_calls.append(tc)
+                                    tool_call_map[event.tool_call_id] = tc
+                            elif isinstance(event, ToolCallUpdate):
+                                if event.tool_call_id in tool_call_map:
+                                    tc = tool_call_map[event.tool_call_id]
+                                    if event.status:
+                                        tc["status"] = event.status
+                                    if event.title:
+                                        tc["name"] = event.title
+                except asyncio.TimeoutError:
+                    log.warning("TickEngine %s: ACP prompt timed out", self.agent_id)
+                    response_chunks.append("(timed out)")
+                finally:
+                    await acp_client.stop()
+
+                # Check full response for quota errors (in case they appeared later)
+                full_text = "".join(response_chunks).lower()
+                if any(p in full_text for p in self._QUOTA_ERROR_PATTERNS) and not tool_calls:
+                    log.warning(
+                        "TickEngine %s: quota error in response with model %s",
+                        self.agent_id, model or "default",
+                    )
+                    if model_idx < len(models_to_try) - 1:
+                        continue  # Try next model
+                    # Last model also failed — return the error response
+                    return response_chunks, tool_calls, tool_call_map
+
+                # Success — if we fell back, log it
+                if model_idx > 0:
+                    log.info(
+                        "TickEngine %s: succeeded with fallback model %s (attempt %d/%d)",
+                        self.agent_id, model or "default", model_idx + 1, len(models_to_try),
+                    )
+                return response_chunks, tool_calls, tool_call_map
+
+            except _QuotaError:
+                if model_idx < len(models_to_try) - 1:
+                    log.info(
+                        "TickEngine %s: trying fallback model %s",
+                        self.agent_id, models_to_try[model_idx + 1] or "default",
+                    )
+                    continue
+                raise RuntimeError(f"All models exhausted due to quota errors")
+            finally:
+                self.config["model"] = saved_model
+
+        raise RuntimeError("No models available for ACP tick")
 
     async def _notify(self, message: str) -> None:
         """Send a notification to the user via Telegram."""

@@ -22,6 +22,8 @@ class RiskLimitsConfig(BaseModel):
 class AgentConfig(BaseModel):
     server_name: str = Field(default="local", description="Hummingbot API server name")
     agent_key: str = Field(default="", description="LLM model to use (e.g. 'claude-code', 'ollama:llama3.1'). Empty = use strategy default.")
+    model: str = Field(default="", description="Override the default model for agent_key (e.g., 'anthropic/claude-sonnet-4' for openrouter:* keys). Empty = use agent_key default.")
+    fallback_models: list[str] = Field(default_factory=list, description="Fallback models to try if primary model fails (e.g., ['gpt-4o-mini', 'gpt-4o']).")
     model_base_url: str = Field(default="", description="Custom base URL for OpenAI-compatible endpoints (LM Studio, vLLM). Leave empty for standard providers.")
     total_amount_quote: float = Field(default=100.0, description="Total capital budget for this session in quote currency")
     frequency_sec: int = Field(default=60, description="Tick frequency in seconds")

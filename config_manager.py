@@ -864,7 +864,9 @@ class ConfigManager:
 # Convenience functions
 def get_config_manager() -> ConfigManager:
     """Get the ConfigManager singleton instance."""
-    return ConfigManager.instance()
+    import os
+    config_path = os.getenv("CONDOR_CONFIG_FILE", "config.yml")
+    return ConfigManager.instance(config_path=config_path)
 
 
 def get_effective_server(chat_id: int, user_data: dict = None) -> str | None:

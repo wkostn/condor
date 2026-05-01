@@ -158,7 +158,7 @@ class TradingAgentPrefs(TypedDict, total=False):
 
 
 class AgentPrefs(TypedDict, total=False):
-    default_agent: str       # "claude-code", "gemini", "codex", "copilot"
+    default_agent: str       # "claude-code", "gemini", "codex", "copilot", "ollama:*", "lmstudio:*", "openrouter:*"
     show_tool_calls: bool    # Show tool call indicators (default True)
     tool_filter_mode: str    # "essential", "moderate", or "full" for PydanticAI models
 
@@ -217,7 +217,7 @@ def _get_default_preferences() -> UserPreferences:
             "last_position": {},
         },
         "agent": {
-            "default_agent": "claude-code",
+            "default_agent": "copilot",  # Changed to GitHub Copilot
             "show_tool_calls": True,
         },
         "trading_agent": {
@@ -856,7 +856,7 @@ def get_agent_prefs(user_data: Dict) -> "AgentPrefs":
     """Get agent preferences"""
     _migrate_legacy_data(user_data)
     return deepcopy(user_data[USER_PREFERENCES_KEY].get("agent", {
-        "default_agent": "claude-code",
+        "default_agent": "copilot",  # Changed to GitHub Copilot
         "show_tool_calls": True,
         "tool_filter_mode": "essential",
     }))
