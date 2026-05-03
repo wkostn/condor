@@ -48,6 +48,57 @@ AGENT_OPTIONS: dict[str, dict[str, str]] = {
 
 DEFAULT_AGENT = "openrouter:meta-llama/llama-3.3-70b-instruct"
 
+# Short aliases for Telegram callback data (64-byte limit)
+# Maps short alias -> full model name
+MODEL_ALIASES: dict[str, str] = {
+    # FREE
+    "hy3": "openrouter:tencent/hy3-preview:free",
+    "nem3": "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+    "lag": "openrouter:poolside/laguna-m.1:free",
+    "owl": "openrouter:openrouter/owl-alpha",
+    # VALUE
+    "llama33": "openrouter:meta-llama/llama-3.3-70b-instruct",
+    "qwen235": "openrouter:qwen/qwen3-235b-a22b-2507",
+    "qwen35f": "openrouter:qwen/qwen3.5-flash-02-23",
+    "dsv4f": "openrouter:deepseek/deepseek-v4-flash",
+    "grok41": "openrouter:x-ai/grok-4.1-fast",
+    # PREMIUM
+    "kimi": "openrouter:moonshotai/kimi-k2.6",
+    "son46": "openrouter:anthropic/claude-sonnet-4.6",
+    "dsv32": "openrouter:deepseek/deepseek-v3.2",
+    "gem3f": "openrouter:google/gemini-3-flash-preview",
+    "opus47": "openrouter:anthropic/claude-opus-4.7",
+    "mini27": "openrouter:minimax/minimax-m2.7",
+    # SPECIALIST
+    "qwen36": "openrouter:qwen/qwen3.6-plus",
+    "grokc": "openrouter:x-ai/grok-code-fast-1",
+    "grok42": "openrouter:x-ai/grok-4.20",
+    "nem49": "openrouter:nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    "haiku": "openrouter:anthropic/claude-haiku-latest",
+    # LEGACY
+    "gpt52": "openrouter:openai/gpt-5.2",
+    "dsv4p": "openrouter:deepseek/deepseek-v4-pro",
+    "copilot": "copilot",
+    "claude": "claude-code",
+    "gemini": "gemini",
+    "codex": "codex",
+    "ollama": "ollama:",
+    "lmstudio": "lmstudio:",
+}
+
+# Reverse mapping: full model name -> short alias
+ALIAS_TO_MODEL: dict[str, str] = {v: k for k, v in MODEL_ALIASES.items()}
+
+
+def get_model_from_alias(alias: str) -> str:
+    """Get full model name from short alias."""
+    return MODEL_ALIASES.get(alias, alias)
+
+
+def get_alias_from_model(model: str) -> str:
+    """Get short alias from full model name."""
+    return ALIAS_TO_MODEL.get(model, model)
+
 # -- Agent modes --
 
 AGENT_MODES: dict[str, dict[str, str]] = {

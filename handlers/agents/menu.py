@@ -44,13 +44,17 @@ def _mode_selection_keyboard() -> InlineKeyboardMarkup:
 
 def _settings_keyboard(current_llm: str) -> InlineKeyboardMarkup:
     """Build LLM picker keyboard."""
+    from ._shared import AGENT_OPTIONS, get_alias_from_model
+    
     keyboard = []
     for key, info in AGENT_OPTIONS.items():
         label = info["label"]
         if key == current_llm:
             label = f"• {label}"
+        # Use short alias for callback data to stay under Telegram's 64-byte limit
+        alias = get_alias_from_model(key)
         keyboard.append(
-            [InlineKeyboardButton(label, callback_data=f"agent:set_llm:{key}")]
+            [InlineKeyboardButton(label, callback_data=f"agent:set_llm:{alias}")]
         )
     keyboard.append([InlineKeyboardButton("Back", callback_data="agent:menu")])
     return InlineKeyboardMarkup(keyboard)

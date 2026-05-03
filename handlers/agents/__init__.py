@@ -262,8 +262,13 @@ async def _handle_set_llm(
     update: Update, context: ContextTypes.DEFAULT_TYPE, llm_key: str
 ) -> None:
     """Update the preferred LLM and destroy existing session."""
+    from ._shared import get_model_from_alias
+    
     query = update.callback_query
     chat_id = update.effective_chat.id
+    
+    # Convert short alias back to full model name
+    llm_key = get_model_from_alias(llm_key)
     
     if llm_key not in AGENT_OPTIONS:
         await query.message.edit_text("Unknown LLM option.")
