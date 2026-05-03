@@ -368,13 +368,35 @@ class PydanticAIClient:
         )
 
     async def stop(self) -> None:
-        """Clean up MCP server subprocesses."""
+        """Clean up MCP server subprocesses.
+        
+        Handles concurrency issues gracefully when stopping servers from
+        a different async context (e.g., when switching models).
+        """
         if self._exit_stack:
             try:
                 await self._exit_stack.aclose()
+            except RuntimeError as e:
+                # Expected when exiting cancel scope in different task (model switching)
+                if "cancel scope" in str(e).lower():
+                    log.info("MCP servers stopped (cross-task cleanup): %s", e)
+                else:
+                    log.exception("RuntimeError closing MCP server exit stack")
+            except ExceptionGroup as eg:
+                # Handle ExceptionGroup from task cleanup
+                cancel_scope_errors = [
+                    exc for exc in eg.exceptions 
+                    if isinstance(exc, RuntimeError) and "cancel scope" in str(exc).lower()
+                ]
+                if cancel_scope_errors:
+                    log.info("MCP servers stopped (task group cleanup with %d cancel scope issues)", len(cancel_scope_errors))
+                else:
+                    log.exception("Error closing MCP server exit stack")
             except Exception:
-                log.exception("Error closing MCP server exit stack")
-            self._exit_stack = None
+                log.exception("Unexpected error closing MCP server exit stack")
+            finally:
+                self._exit_stack = None
+        
         self._mcp_servers.clear()
         self._agent = None
         self._message_history = []
