@@ -7,21 +7,46 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 AGENT_OPTIONS: dict[str, dict[str, str]] = {
-    "copilot": {"label": "GitHub Copilot CLI"},
-    "claude-code": {"label": "Claude Code"},
-    "gemini": {"label": "Gemini CLI"},
-    "codex": {"label": "ChatGPT Codex"},
+    # FREE TIER - Best for development & testing
+    "openrouter:tencent/hy3-preview:free": {"label": "🆓 Tencent Hy3 (FREE, #1 Ranked)"},
+    "openrouter:nvidia/nemotron-3-super-120b-a12b:free": {"label": "🆓 NVIDIA Nemotron 3 Super (FREE)"},
+    "openrouter:poolside/laguna-m.1:free": {"label": "🆓 Poolside Laguna M.1 (FREE Coding)"},
+    "openrouter:openrouter/owl-alpha": {"label": "🆓 Owl Alpha (FREE Agentic)"},
+    
+    # VALUE TIER - Best price/performance for operational use
+    "openrouter:meta-llama/llama-3.3-70b-instruct": {"label": "💎 Llama 3.3 70B ($0.10/$0.32) ⭐ Recommended"},
+    "openrouter:qwen/qwen3-235b-a22b-2507": {"label": "💎 Qwen3 235B ($0.07/$0.10)"},
+    "openrouter:qwen/qwen3.5-flash-02-23": {"label": "💎 Qwen3.5 Flash ($0.07/$0.26)"},
+    "openrouter:deepseek/deepseek-v4-flash": {"label": "💎 DeepSeek V4 Flash ($0.14/$0.28) #9"},
+    "openrouter:x-ai/grok-4.1-fast": {"label": "💎 Grok 4.1 Fast ($0.20/$0.50) #10"},
+    
+    # PREMIUM TIER - Top-ranked models for critical tasks
+    "openrouter:moonshotai/kimi-k2.6": {"label": "👑 Kimi K2.6 ($0.74/$3.49) #2 Ranked"},
+    "openrouter:anthropic/claude-sonnet-4.6": {"label": "👑 Claude Sonnet 4.6 ($3/$15) #3 Ranked"},
+    "openrouter:deepseek/deepseek-v3.2": {"label": "👑 DeepSeek V3.2 ($0.25/$0.38) #5 Ranked"},
+    "openrouter:google/gemini-3-flash-preview": {"label": "👑 Gemini 3 Flash ($2/$12) #4 Ranked"},
+    "openrouter:anthropic/claude-opus-4.7": {"label": "👑 Claude Opus 4.7 ($6/$30) #6 Ranked"},
+    "openrouter:minimax/minimax-m2.7": {"label": "👑 MiniMax M2.7 ($0.30/$1.20) #8 Ranked"},
+    
+    # SPECIALIST TIER - Task-specific excellence
+    "openrouter:qwen/qwen3.6-plus": {"label": "🎯 Qwen3.6 Plus (Coding, $0.33/$1.95)"},
+    "openrouter:x-ai/grok-code-fast-1": {"label": "🎯 Grok Code Fast (Coding, $0.20/$1.50)"},
+    "openrouter:x-ai/grok-4.20": {"label": "🎯 Grok 4.20 (Low Hallucination, $1.25/$2.50)"},
+    "openrouter:nvidia/llama-3.3-nemotron-super-49b-v1.5": {"label": "🎯 Nemotron 49B (Reasoning, $0.10/$0.40)"},
+    "openrouter:anthropic/claude-haiku-latest": {"label": "⚡ Claude Haiku (Fast, $1/$5)"},
+    
+    # LEGACY OPTIONS - Still supported
+    "openrouter:openai/gpt-5.2": {"label": "OpenRouter — GPT-5.2"},
+    "openrouter:deepseek/deepseek-v4-pro": {"label": "OpenRouter — DeepSeek V4 Pro"},
+    "copilot": {"label": "GitHub Copilot CLI (requires token)"},
+    "claude-code": {"label": "Claude Code (requires CLI)"},
+    "gemini": {"label": "Gemini CLI (requires CLI)"},
+    "codex": {"label": "ChatGPT Codex (requires CLI)"},
     "ollama:": {"label": "Ollama — Default Model"},
     "lmstudio:": {"label": "LM Studio — Default Model"},
-    "openrouter:openai/gpt-5.2": {"label": "OpenRouter — GPT-5.2"},
-    "openrouter:anthropic/claude-sonnet-4": {"label": "OpenRouter — Claude Sonnet 4"},
-    "openrouter:meta-llama/llama-3.3-70b-instruct": {"label": "OpenRouter — Llama 3.3 70B"},
-    "openrouter:minimax/minimax-m2.7": {"label": "OpenRouter — MiniMax M2.7"},
-    "openrouter:moonshotai/kimi-k2.6": {"label": "OpenRouter — Kimi K2.6"},
-    "openrouter:deepseek/deepseek-v4-pro": {"label": "OpenRouter — DeepSeek V4 Pro"},
 }
 
-DEFAULT_AGENT = "claude-code"
+DEFAULT_AGENT = "openrouter:meta-llama/llama-3.3-70b-instruct"
 
 # -- Agent modes --
 
