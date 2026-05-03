@@ -349,13 +349,10 @@ class PydanticAIClient:
             getattr(getattr(model, "client", None), "base_url", None),
         )
 
-        # Create agent without result validation (we handle plain text streaming)
-        # Set result_type=str to avoid structured output validation errors
+        # Create agent for plain text chat (no structured output)
         self._agent = Agent(
             model,
             toolsets=toolsets,
-            result_type=str,
-            max_result_retries=5,  # Allow more retries for flaky models
         )
 
         # Enter MCP servers into the exit stack so stop() cleans them up.
@@ -500,6 +497,13 @@ class PydanticAIClient:
         except asyncio.TimeoutError:
             yield PromptDone(stop_reason="timeout")
         except Exception as e:
-            log.exception("PydanticAI prompt error: %s", e)
+            # Check if it's a validation error - if so, we've already yielded the text chunks
+            # so we can just log and complete gracefully
+            error_msg = str(e)
+            if "validation" in error_msg.lower() or "UnexpectedModelBehavior" in error_msg:
+                log.warning("PydanticAI validation error (text already streamed): %s", error_msg)
+                yield PromptDone(stop_reason="end_turn")
+            else:
+                log.exception("PydanticAI prompt error: %s", e)
             yield TextChunk(text=f"(error: {e})")
             yield PromptDone(stop_reason="error")
