@@ -349,9 +349,13 @@ class PydanticAIClient:
             getattr(getattr(model, "client", None), "base_url", None),
         )
 
+        # Create agent without result validation (we handle plain text streaming)
+        # Set result_type=str to avoid structured output validation errors
         self._agent = Agent(
             model,
             toolsets=toolsets,
+            result_type=str,
+            max_result_retries=5,  # Allow more retries for flaky models
         )
 
         # Enter MCP servers into the exit stack so stop() cleans them up.
