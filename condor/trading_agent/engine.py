@@ -197,20 +197,10 @@ class TickEngine:
                     raise
                 except Exception as e:
                     self._last_error = str(e)
-                    consecutive_errors += 1
-                    log.exception("TickEngine %s tick error (%d consecutive)", self.agent_id, consecutive_errors)
-                    self.journal.append_error(str(e))
-
-                    if consecutive_errors >= max_consecutive_errors:
-                        msg = (
-                            f"Agent {self.agent_id}: auto-paused after {consecutive_errors} "
-                            f"consecutive errors. Last: {e}. Resume manually."
-                        )
-                        log.error(msg)
-                        self._paused = True
-                        await self._notify(msg)
-                    else:
-                        await self._notify(f"Agent {self.agent_id} tick error ({consecutive_errors}/{max_consecutive_errors}): {e}")
+                    log.exception("TickEngine %s tick error", self.agent_id)
+                    if self.journal:
+                        self.journal.append_error(str(e))
+                    await self._notify(f"Agent {self.agent_id} tick error: {e}")
 
                 # Single-tick modes: stop after first tick
                 if mode in ("dry_run", "run_once"):
@@ -314,8 +304,52 @@ class TickEngine:
             )
             self._pending_directives.clear()
 
-        # 6. Run ACP tick with model fallback on quota/auth errors
-        response_chunks, tool_calls, tool_call_map = await self._run_acp_tick_with_fallback(prompt)
+        # 6. Create a fresh agent client per tick (clean context window)
+        acp_client = await self._create_client()
+
+        response_chunks: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        tool_call_map: dict[str, dict[str, Any]] = {}
+
+        await acp_client.start()
+        try:
+            async with asyncio.timeout(300):
+                async for event in self._collect_stream(acp_client, prompt):
+                    if isinstance(event, TextChunk):
+                        response_chunks.append(event.text)
+                    elif isinstance(event, ToolCallEvent):
+                        if event.tool_call_id in tool_call_map:
+                            tc = tool_call_map[event.tool_call_id]
+                            tc["status"] = event.status
+                            if event.title:
+                                tc["name"] = event.title
+                            if event.input:
+                                tc["input"] = event.input
+                        else:
+                            tc = {
+                                "id": event.tool_call_id,
+                                "name": event.title,
+                                "status": event.status,
+                                "kind": event.kind,
+                            }
+                            if event.input:
+                                tc["input"] = event.input
+                            tool_calls.append(tc)
+                            tool_call_map[event.tool_call_id] = tc
+                    elif isinstance(event, ToolCallUpdate):
+                        if event.tool_call_id in tool_call_map:
+                            tc = tool_call_map[event.tool_call_id]
+                            if event.status:
+                                tc["status"] = event.status
+                            if event.title:
+                                tc["name"] = event.title
+                            if event.output:
+                                tc["output"] = event.output
+        except asyncio.TimeoutError:
+            log.warning("TickEngine %s: ACP prompt timed out", self.agent_id)
+            response_chunks.append("(timed out)")
+        finally:
+            await acp_client.stop()
 
         response_text = "".join(response_chunks)
         tick_duration = time.time() - self._last_tick_at

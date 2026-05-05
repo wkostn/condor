@@ -90,6 +90,7 @@ class ToolCallUpdate:
     tool_call_id: str
     status: str | None = None
     title: str | None = None
+    output: str | None = None
 
 
 @dataclass
@@ -155,21 +156,26 @@ class ACPClient:
         self._read_task = asyncio.create_task(self._read_loop())
         self._stderr_task = asyncio.create_task(self._drain_stderr())
 
-        await self._peer.send_request(
-            "initialize",
-            {
-                "protocolVersion": 1,
-                "clientCapabilities": {},
-                "clientInfo": {"name": "condor", "version": "0.1.0"},
-            },
-            self._process.stdin,
-        )
-        log.info("ACP session/new params: cwd=%s, mcp_servers=%s", self.working_dir, self.mcp_servers)
-        result = await self._peer.send_request(
-            "session/new",
-            {"cwd": self.working_dir, "mcpServers": self.mcp_servers},
-            self._process.stdin,
-        )
+        try:
+            await self._peer.send_request(
+                "initialize",
+                {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {},
+                    "clientInfo": {"name": "condor", "version": "0.1.0"},
+                },
+                self._process.stdin,
+            )
+            result = await self._peer.send_request(
+                "session/new",
+                {"cwd": self.working_dir, "mcpServers": self.mcp_servers},
+                self._process.stdin,
+            )
+        except Exception:
+            # Handshake failed -- kill the subprocess to prevent orphan
+            await self.stop()
+            raise
+
         self._session_id = result["sessionId"]
         log.info("ACP session started: %s (cmd=%s)", self._session_id, self.command)
 
@@ -432,6 +438,7 @@ class ACPClient:
                         tool_call_id=delta.get("toolCallId", ""),
                         status=delta.get("status"),
                         title=delta.get("title"),
+                        output=delta.get("output"),
                     )
                 )
             elif kind == "done":
@@ -469,6 +476,7 @@ class ACPClient:
                         tool_call_id=update.get("toolCallId", ""),
                         status=update.get("status"),
                         title=update.get("title"),
+                        output=update.get("output"),
                     )
                 )
 
