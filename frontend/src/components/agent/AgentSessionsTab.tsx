@@ -40,9 +40,7 @@ export function SessionSelector({
   }, []);
 
   const selected = sessions.find((s) => s.number === selectedSessionNum);
-  const sortedSessions = useMemo(() => {
-    return [...sessions].sort((a, b) => b.number - a.number);
-  }, [sessions]);
+  const sortedSessions = sessions;
 
   return (
     <div ref={ref} className="relative sm:w-72">
