@@ -52,7 +52,9 @@ class ConfigManager:
 
     def __init__(self, config_path: str = "config.yml"):
         self.config_path = Path(config_path)
-        self.audit_log_path = Path("audit_log.yml")
+        # Place audit log in same directory as config
+        config_dir = self.config_path.parent if self.config_path.parent != Path('.') else Path('.')
+        self.audit_log_path = config_dir / "audit_log.yml"
         self._data: dict = {}
         self._audit_log: list = []
         self._clients: Dict[str, Tuple[Any, float]] = (

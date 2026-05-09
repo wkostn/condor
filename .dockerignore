@@ -13,6 +13,9 @@ logs/
 build/
 *.egg-info/
 .pytest_cache/
+config.yml
+bot-config.yml
+audit_log.yml
 .mypy_cache/
 servers.yml
 # Allow frontend/dist to be included in Docker image
