@@ -2,7 +2,7 @@
 SHELL := /bin/bash
 export PATH := $(HOME)/.local/bin:$(HOME)/.cargo/bin:$(PATH)
 
-.PHONY: help setup install run test lint build-frontend setup-chrome
+.PHONY: help setup install run test lint build-frontend setup-chrome run-shadow start-shadow stop-shadow logs-shadow
 
 # Helper function to find node/npm via nvm or system
 define find_node
@@ -20,6 +20,10 @@ help:
 	@echo "  make setup       - Interactive setup wizard"
 	@echo "  make install     - Setup + install all dependencies"
 	@echo "  make run         - Run locally (dev)"
+	@echo "  make run-shadow  - Run shadow monitor locally"
+	@echo "  make start-shadow - Start shadow monitor in Docker"
+	@echo "  make stop-shadow - Stop shadow monitor in Docker"
+	@echo "  make logs-shadow - Tail shadow monitor logs"
 	@echo "  make test        - Run tests"
 	@echo "  make lint        - Run black + isort"
 
@@ -49,6 +53,18 @@ build-frontend:
 
 run: build-frontend
 	uv run python main.py
+
+run-shadow:
+	uv run python scripts/shadow_monitor.py
+
+start-shadow:
+	docker compose up -d shadow-monitor
+
+stop-shadow:
+	docker compose stop shadow-monitor
+
+logs-shadow:
+	docker compose logs -f shadow-monitor
 
 test:
 	uv run pytest

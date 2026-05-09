@@ -17,3 +17,25 @@ services:
     network_mode: host
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+
+  shadow-monitor:
+    image: hummingbot/condor:latest
+    container_name: condor-shadow-monitor
+    restart: unless-stopped
+    command: ["uv", "run", "python", "scripts/shadow_monitor.py"]
+    environment:
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN}
+      ADMIN_USER_ID: ${ADMIN_USER_ID}
+      WEB_PORT: ${WEB_PORT:-8088}
+      HB_API_URL: ${HB_API_URL:-http://127.0.0.1:8000}
+      SHADOW_MONITOR_INTERVAL_SEC: ${SHADOW_MONITOR_INTERVAL_SEC:-60}
+      SHADOW_MONITOR_TIMEOUT_SEC: ${SHADOW_MONITOR_TIMEOUT_SEC:-8}
+      SHADOW_MONITOR_FAIL_THRESHOLD: ${SHADOW_MONITOR_FAIL_THRESHOLD:-3}
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./config.yml:/app/config.yml
+    network_mode: host
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
