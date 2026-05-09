@@ -28,6 +28,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Reduce noisy long-polling HTTP logs in production container output.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.INFO)
+
 
 def _get_start_menu_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
     """Build the start menu inline keyboard."""
