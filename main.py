@@ -466,6 +466,11 @@ async def post_init(application: Application) -> None:
 
     await start_health_monitor(application.bot)
 
+    # Phase 1 operations jobs: morning report + status transition alerts
+    from utils.phase1_monitoring import schedule_phase1_monitoring_jobs
+
+    await schedule_phase1_monitoring_jobs(application)
+
     # Schedule periodic update checks (notifies admin)
     from handlers.admin.update import schedule_update_checks
 
