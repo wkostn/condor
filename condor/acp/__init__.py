@@ -1,7 +1,6 @@
 from .client import (
     ACPClient,
     ACP_COMMANDS,
-    build_acp_command,
     PermissionCallback,
     TextChunk,
     ThoughtChunk,

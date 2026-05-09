@@ -94,7 +94,7 @@ def _infer_tool_filter_mode(model_name: str) -> str:
 # which maps directly to pydantic-ai model identifiers.
 PYDANTIC_AI_PREFIXES = frozenset({"ollama", "openai", "groq", "anthropic", "google", "lmstudio", "openrouter"})
 
-# Default base URLs for local model providers
+# Default base URLs for local model providers and OpenRouter
 DEFAULT_BASE_URLS: dict[str, str] = {
     "ollama": "http://localhost:11434/v1",
     "lmstudio": "http://localhost:1234/v1",
@@ -104,9 +104,6 @@ DEFAULT_BASE_URLS: dict[str, str] = {
 
 def is_pydantic_ai_model(agent_key: str) -> bool:
     """Check if an agent_key should use the PydanticAI client."""
-    # Handle bare keys like "openrouter" (no colon)
-    if agent_key in PYDANTIC_AI_PREFIXES:
-        return True
     prefix = agent_key.split(":", 1)[0] if ":" in agent_key else ""
     return prefix in PYDANTIC_AI_PREFIXES
 
@@ -124,6 +121,7 @@ class PydanticAIClient:
       - "openai:my-model"  → with base_url, uses any OpenAI-compatible API (LM Studio, vLLM, etc.)
       - "groq:llama-3.3-70b-versatile" → uses Groq cloud
       - "anthropic:claude-sonnet-4-6" → uses Anthropic API
+      - "openrouter:anthropic/claude-sonnet-4-5" → uses OpenRouter (requires OPENROUTER_API_KEY)
     """
 
     def __init__(
@@ -146,11 +144,6 @@ class PydanticAIClient:
         self._exit_stack: AsyncExitStack | None = None
         self._mcp_ctx: Any = None
         self._agent: Any = None
-        # Conversation history. pydantic-ai's Agent.iter is stateless, so we
-        # must thread the message list across calls ourselves to retain
-        # context between turns. Capped to avoid unbounded token growth.
-        self._message_history: list[Any] = []
-        self._max_history_messages: int = int(os.environ.get("PYDANTIC_AI_MAX_HISTORY", "60"))
 
     def _build_model(self) -> Any:
         """Build the pydantic-ai model object with sensible defaults.
@@ -160,13 +153,13 @@ class PydanticAIClient:
         environment variables like OLLAMA_BASE_URL.
 
         Resolution:
-          - ollama:model    → OpenAI-compat at localhost:11434/v1 (or custom base_url)
-          - lmstudio:model  → OpenAI-compat at localhost:1234/v1 (or custom base_url)
+          - ollama:model     → OpenAI-compat at localhost:11434/v1 (or custom base_url)
+          - lmstudio:model   → OpenAI-compat at localhost:1234/v1 (or custom base_url)
           - openrouter:model → OpenAI-compat at https://openrouter.ai/api/v1,
-                               requires OPENROUTER_API_KEY; model id must be explicit
-                               (e.g. "openrouter:anthropic/claude-sonnet-4").
-          - openai:model    → OpenAI API (or custom base_url for vLLM, etc.)
-          - groq/anthropic  → standard pydantic-ai resolution
+                               requires OPENROUTER_API_KEY; model id must be
+                               explicit (e.g. "openrouter:anthropic/claude-sonnet-4-5").
+          - openai:model     → OpenAI API (or custom base_url for vLLM, etc.)
+          - groq/anthropic   → standard pydantic-ai resolution
         """
         from pydantic_ai.models.openai import OpenAIModel
         from pydantic_ai.providers.openai import OpenAIProvider
@@ -174,42 +167,24 @@ class PydanticAIClient:
         prefix, _, model_id = self.model_name.partition(":")
         base_url = self.base_url
 
-        # OpenRouter: OpenAI-compatible cloud endpoint, requires API key.
-        # Handled before the generic local-provider branch because that branch
-        # hardcodes api_key="not-needed" which OpenRouter rejects.
+        # OpenRouter: OpenAI-compatible cloud gateway, requires API key.
+        # Handled before the generic DEFAULT_BASE_URLS branch because that branch
+        # uses api_key="not-needed", which OpenRouter rejects.
         if prefix == "openrouter":
             if not model_id:
                 raise RuntimeError(
-                    "OpenRouter requires an explicit model id, "
-                    "e.g. 'openrouter:openai/gpt-5.2' or "
-                    "'openrouter:anthropic/claude-sonnet-4'."
+                    "OpenRouter requires an explicit model id, e.g. "
+                    "'openrouter:openai/gpt-4o' or 'openrouter:anthropic/claude-sonnet-4-5'."
                 )
             api_key = os.environ.get("OPENROUTER_API_KEY")
             if not api_key:
                 raise RuntimeError(
-                    "OPENROUTER_API_KEY is not set. Add it to your .env "
-                    "to use openrouter:* models."
+                    "OPENROUTER_API_KEY is not set. Add it to your .env to use openrouter:* models."
                 )
-
-            # Optional attribution headers for the OpenRouter leaderboards.
-            default_headers: dict[str, str] = {}
-            referer = os.environ.get("OPENROUTER_SITE_URL")
-            title = os.environ.get("OPENROUTER_SITE_TITLE", "Condor")
-            if referer:
-                default_headers["HTTP-Referer"] = referer
-            if title:
-                default_headers["X-OpenRouter-Title"] = title
-
-            # pydantic-ai's OpenAIProvider doesn't accept default_headers, so we
-            # pass a pre-built AsyncOpenAI client instead.
-            from openai import AsyncOpenAI
-
-            client = AsyncOpenAI(
+            provider = OpenAIProvider(
                 base_url=base_url or DEFAULT_BASE_URLS["openrouter"],
                 api_key=api_key,
-                default_headers=default_headers or None,
             )
-            provider = OpenAIProvider(openai_client=client)
             return OpenAIModel(model_id, provider=provider)
 
         # Local providers: always use OpenAI-compatible endpoint with default URL
@@ -228,8 +203,6 @@ class PydanticAIClient:
         # Standard pydantic-ai resolution (openai, groq, anthropic, google)
         from pydantic_ai.models import infer_model
         return infer_model(self.model_name)
-
-
 
     def _resolve_default_local_model(self, prefix: str, base_url: str) -> str:
         """Resolve a usable default model for local providers.
@@ -342,14 +315,6 @@ class PydanticAIClient:
 
         model = self._build_model()
 
-        log.info(
-            "[llm-switch] PydanticAIClient built model: requested=%r actual_model_name=%r base_url=%r",
-            self.model_name,
-            getattr(model, "model_name", None),
-            getattr(getattr(model, "client", None), "base_url", None),
-        )
-
-        # Create agent for plain text chat (no structured output)
         self._agent = Agent(
             model,
             toolsets=toolsets,
@@ -358,8 +323,13 @@ class PydanticAIClient:
         # Enter MCP servers into the exit stack so stop() cleans them up.
         # This uses the agent's run_mcp_servers() context manager which
         # properly starts and stops all MCP subprocess servers.
-        self._mcp_ctx = self._agent.run_mcp_servers()
-        await self._exit_stack.enter_async_context(self._mcp_ctx)
+        try:
+            self._mcp_ctx = self._agent.run_mcp_servers()
+            await self._exit_stack.enter_async_context(self._mcp_ctx)
+        except Exception:
+            # MCP server startup failed -- clean up to prevent orphan subprocesses
+            await self.stop()
+            raise
 
         log.info(
             "PydanticAI client ready: model=%s, mcp_servers=%d",
@@ -368,43 +338,15 @@ class PydanticAIClient:
         )
 
     async def stop(self) -> None:
-        """Clean up MCP server subprocesses.
-        
-        Handles concurrency issues gracefully when stopping servers from
-        a different async context (e.g., when switching models).
-        """
+        """Clean up MCP server subprocesses."""
         if self._exit_stack:
             try:
                 await self._exit_stack.aclose()
-            except RuntimeError as e:
-                # Expected when exiting cancel scope in different task (model switching)
-                if "cancel scope" in str(e).lower():
-                    log.info("MCP servers stopped (cross-task cleanup): %s", e)
-                else:
-                    log.exception("RuntimeError closing MCP server exit stack")
-            except ExceptionGroup as eg:
-                # Handle ExceptionGroup from task cleanup
-                cancel_scope_errors = [
-                    exc for exc in eg.exceptions 
-                    if isinstance(exc, RuntimeError) and "cancel scope" in str(exc).lower()
-                ]
-                if cancel_scope_errors:
-                    log.info("MCP servers stopped (task group cleanup with %d cancel scope issues)", len(cancel_scope_errors))
-                else:
-                    log.exception("Error closing MCP server exit stack")
             except Exception:
-                log.exception("Unexpected error closing MCP server exit stack")
-            finally:
-                self._exit_stack = None
-        
+                log.exception("Error closing MCP server exit stack")
+            self._exit_stack = None
         self._mcp_servers.clear()
         self._agent = None
-        self._message_history = []
-
-    def clear_history(self) -> None:
-        """Forget the current conversation. Use to start a fresh thread without
-        recreating the client / restarting MCP servers."""
-        self._message_history = []
 
     @property
     def alive(self) -> bool:
@@ -432,14 +374,10 @@ class PydanticAIClient:
 
         try:
             from pydantic_ai.agent import CallToolsNode, ModelRequestNode
-            from pydantic_ai.messages import TextPart, ToolCallPart
+            from pydantic_ai.messages import TextPart, ToolCallPart, ToolReturnPart
             from pydantic_graph import End
 
-            history = self._message_history or None
-            run_obj = None
-
-            async with self._agent.iter(text, message_history=history) as run:
-                run_obj = run
+            async with self._agent.iter(text) as run:
                 async for node in run:
                     if isinstance(node, End):
                         # Final result -- extract text from the result
@@ -452,6 +390,17 @@ class PydanticAIClient:
                     if isinstance(node, ModelRequestNode):
                         elapsed = time.monotonic() - start_time
                         yield Heartbeat(elapsed_seconds=elapsed)
+                        # Extract tool return results from request parts
+                        if hasattr(node, 'request') and node.request:
+                            for part in node.request.parts:
+                                if isinstance(part, ToolReturnPart):
+                                    content = part.content
+                                    output_str = content if isinstance(content, str) else str(content)
+                                    yield ToolCallUpdate(
+                                        tool_call_id=part.tool_call_id or "",
+                                        status="completed",
+                                        output=output_str,
+                                    )
 
                     elif isinstance(node, CallToolsNode):
                         # Emit text and tool-call events from model response
@@ -501,31 +450,51 @@ class PydanticAIClient:
                                     status="completed",
                                 )
 
-            # Persist conversation history for the next turn.
-            # AgentRun.all_messages() returns the full thread (history + new
-            # request + new response). Truncate from the front to keep the
-            # most recent N messages and bound token usage.
-            if run_obj is not None:
-                try:
-                    full = run_obj.all_messages()
-                    if self._max_history_messages > 0 and len(full) > self._max_history_messages:
-                        full = full[-self._max_history_messages :]
-                    self._message_history = list(full)
-                except Exception:
-                    log.exception("Failed to capture message history; conversation context will be lost")
-
             yield PromptDone(stop_reason="end_turn")
 
         except asyncio.TimeoutError:
             yield PromptDone(stop_reason="timeout")
         except Exception as e:
-            # Check if it's a validation error - if so, we've already yielded the text chunks
-            # so we can just log and complete gracefully
-            error_msg = str(e)
-            if "validation" in error_msg.lower() or "UnexpectedModelBehavior" in error_msg:
-                log.warning("PydanticAI validation error (text already streamed): %s", error_msg)
-                yield PromptDone(stop_reason="end_turn")
-            else:
-                log.exception("PydanticAI prompt error: %s", e)
-            yield TextChunk(text=f"(error: {e})")
+            log.exception("PydanticAI prompt error: %s", e)
+            yield TextChunk(text=self._format_error(e))
             yield PromptDone(stop_reason="error")
+
+    def _format_error(self, e: Exception) -> str:
+        """Translate provider HTTP errors into actionable user-facing text.
+
+        Falls back to the raw exception string for anything we don't recognize.
+        """
+        try:
+            from pydantic_ai.exceptions import ModelHTTPError
+        except ImportError:
+            return f"(error: {e})"
+
+        if not isinstance(e, ModelHTTPError):
+            return f"(error: {e})"
+
+        is_openrouter = self.model_name.startswith("openrouter:")
+        status = getattr(e, "status_code", None)
+
+        if is_openrouter and status == 402:
+            return (
+                "OpenRouter rejected the request: insufficient credits.\n\n"
+                "Either top up at https://openrouter.ai/settings/credits, or "
+                "switch to a free model with /agent → Change LLM → OpenRouter "
+                "→ Enter model manually → openrouter/free."
+            )
+        if is_openrouter and status == 401:
+            return (
+                "OpenRouter rejected the API key (401). Check OPENROUTER_API_KEY "
+                "in your .env and confirm the key is on the account that holds your credits."
+            )
+        if is_openrouter and status == 429:
+            return (
+                "OpenRouter rate-limited the request (429). Free models share a "
+                "tighter quota — wait a moment and retry, or switch to a paid model."
+            )
+        if is_openrouter and status and 500 <= status < 600:
+            return (
+                f"OpenRouter upstream error ({status}). The selected provider may "
+                "be down — try again, or switch models with /agent → Change LLM."
+            )
+        return f"(error: {e})"
