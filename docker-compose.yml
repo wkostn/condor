@@ -1,7 +1,7 @@
 services:
   condor:
     build: .
-    image: hummingbot/condor:latest
+    image: hummingbird/condor:local
     container_name: condor-bot
     restart: unless-stopped
     environment:
@@ -19,7 +19,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
 
   shadow-monitor:
-    image: hummingbot/condor:latest
+    image: hummingbird/condor:local
     container_name: condor-shadow-monitor
     restart: unless-stopped
     command: ["uv", "run", "python", "scripts/shadow_monitor.py"]
