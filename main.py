@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import NetworkError
@@ -19,6 +20,7 @@ from telegram.ext import (
 from condor.persistence import SafePicklePersistence
 from handlers import clear_all_input_states
 from utils.auth import restricted
+from utils.config import ADMIN_USER_ID
 from utils.config import WEB_PORT, WEB_URL
 from utils.config import TELEGRAM_TOKEN
 
@@ -380,6 +382,47 @@ async def sync_server_permissions() -> None:
     logger.info("Synced server permissions")
 
 
+def bootstrap_default_server_from_env() -> None:
+    """Ensure a default 'main' server exists from HUMMINGBOT_* env vars.
+
+    This prevents empty-config startups from breaking web/API routes that assume
+    an active server context.
+    """
+    from config_manager import get_config_manager
+
+    api_url = os.getenv("HUMMINGBOT_API_URL", "").strip()
+    if not api_url:
+        return
+
+    parsed = urlparse(api_url)
+    host = parsed.hostname
+    if not host:
+        logger.warning("HUMMINGBOT_API_URL is set but invalid: %s", api_url)
+        return
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    username = os.getenv("HUMMINGBOT_USERNAME", "admin").strip() or "admin"
+    password = os.getenv("HUMMINGBOT_PASSWORD", "admin").strip() or "admin"
+
+    cm = get_config_manager()
+
+    if not cm.get_server("main"):
+        added = cm.add_server(
+            name="main",
+            host=host,
+            port=port,
+            username=username,
+            password=password,
+            owner_id=ADMIN_USER_ID,
+        )
+        if added:
+            logger.info("Bootstrapped default server 'main' from HUMMINGBOT_API_URL")
+
+    if not cm.get_default_server() and cm.get_server("main"):
+        cm.set_default_server("main")
+        logger.info("Set global default server to 'main'")
+
+
 async def post_init(application: Application) -> None:
     """Register bot commands after initialization."""
     from telegram import BotCommandScopeChat
@@ -387,6 +430,7 @@ async def post_init(application: Application) -> None:
     from utils.config import ADMIN_USER_ID
 
     # Sync server permissions (ensures all servers have ownership entries)
+    bootstrap_default_server_from_env()
     await sync_server_permissions()
 
     # Preload Whisper model in background so first voice message is fast
